@@ -1,18 +1,20 @@
-"""Command line entry point for listing sessions and notes stored in Firestore."""
+"""Command line entry point for listing todo lists and items stored in Firestore."""
 from __future__ import annotations
 
 import argparse
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from datetime import datetime
 
 from google.auth.credentials import AnonymousCredentials
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import firestore
-from google.cloud.firestore import Client, DocumentSnapshot
+from google.cloud.firestore import Client
 from rich.console import Console
 from rich.table import Table
 
 from .config import FirebaseConfig
+from .todos import TodoList, fetch_todo_lists
 
 console = Console()
 
@@ -31,79 +33,76 @@ def build_client(project_id: str, credentials_path: str | None = None) -> Client
         return firestore.Client(project=project_id, credentials=AnonymousCredentials())
 
 
-def format_session(doc: DocumentSnapshot) -> Table:
-    """Build a ``rich`` table representing a session document."""
-    data = doc.to_dict() or {}
-    title = (
-        data.get("name")
-        or data.get("title")
-        or data.get("startedAt")
-        or data.get("createdAt")
-        or doc.id
-    )
+def _render_value(value: object) -> str:
+    if isinstance(value, Mapping):
+        items = ", ".join(f"{key}={val!r}" for key, val in sorted(value.items()))
+        return items or "<empty mapping>"
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        return ", ".join(map(str, value))
+    return str(value)
 
-    table = Table(title=f"Session: {title}")
+
+def format_todo_list(todo_list: TodoList) -> Table:
+    """Build a ``rich`` table describing the metadata of a todo list."""
+
+    table = Table(title=f"Todo list: {todo_list.display_title}")
     table.add_column("Field")
     table.add_column("Value", overflow="fold")
 
-    if not data:
+    if not todo_list.data:
         table.add_row("<empty>", "<no fields>")
-    else:
-        for key, value in sorted(data.items()):
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
-                rendered = ", ".join(map(str, value))
-            else:
-                rendered = str(value)
-            table.add_row(key, rendered)
+        return table
+
+    for key, value in sorted(todo_list.data.items()):
+        table.add_row(key, _render_value(value))
 
     return table
 
 
-def build_notes_table(doc: DocumentSnapshot) -> Table | None:
-    """Return a table with the notes for ``doc`` if any are present."""
+def build_todos_table(todo_list: TodoList) -> Table | None:
+    """Return a table with the todos for ``todo_list`` if any are present."""
 
-    notes_collection = doc.reference.collection("notes")
-    notes = list(notes_collection.stream())
-    if not notes:
+    if not todo_list.todos:
         return None
 
-    table = Table(title=f"Notes for session {doc.id}")
-    table.add_column("Note ID")
-    table.add_column("Content", overflow="fold")
+    table = Table(title=f"Todos for list {todo_list.id}")
+    table.add_column("#")
+    table.add_column("Title", overflow="fold")
+    table.add_column("Due", overflow="fold")
+    table.add_column("Status", overflow="fold")
     table.add_column("Metadata", overflow="fold")
 
-    for note in notes:
-        data = note.to_dict() or {}
-        content = data.get("content") or data.get("text") or data.get("note") or "<empty>"
-        metadata_items = [
+    for index, todo in enumerate(todo_list.todos, start=1):
+        due = todo.due_date.isoformat(timespec="minutes") if isinstance(todo.due_date, datetime) else "—"
+        metadata_items = [f"id={todo.id}"] + [
             f"{key}={value!r}"
-            for key, value in sorted(data.items())
-            if key not in {"content", "text", "note"}
+            for key, value in sorted(todo.metadata.items())
         ]
         metadata = ", ".join(metadata_items) or "<no metadata>"
-        table.add_row(note.id, str(content), metadata)
+        table.add_row(str(index), todo.title, due, todo.status, metadata)
 
     return table
 
 
-def list_sessions(client: Client, collection: str) -> None:
-    """Fetch sessions from Firestore and print them along with their notes."""
-    documents = list(client.collection(collection).stream())
-    if not documents:
+def list_todos(client: Client, collection: str) -> None:
+    """Fetch todo lists from Firestore and print them along with their items."""
+
+    todo_lists = fetch_todo_lists(client, collection)
+    if not todo_lists:
         console.print(f"[yellow]No documents found in collection '{collection}'.")
         return
 
-    console.print(f"[green]Found {len(documents)} session(s) in collection '{collection}'.")
+    console.print(f"[green]Found {len(todo_lists)} todo list(s) in collection '{collection}'.")
 
-    for document in documents:
-        console.print(format_session(document))
-        notes_table = build_notes_table(document)
-        if notes_table:
-            console.print(notes_table)
+    for todo_list in todo_lists:
+        console.print(format_todo_list(todo_list))
+        todos_table = build_todos_table(todo_list)
+        if todos_table:
+            console.print(todos_table)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="List sessions stored in Firestore.")
+    parser = argparse.ArgumentParser(description="List todo lists stored in Firestore.")
     parser.add_argument(
         "--config",
         default="google-services.json",
@@ -111,8 +110,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--collection",
-        default="sessions",
-        help="Name of the Firestore collection that stores sessions.",
+        default="todoLists",
+        help="Name of the Firestore collection that stores the todo lists.",
     )
     parser.add_argument(
         "--credentials",
@@ -130,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config = FirebaseConfig.from_google_services(args.config)
     client = build_client(config.project_id, args.credentials)
-    list_sessions(client, args.collection)
+    list_todos(client, args.collection)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
