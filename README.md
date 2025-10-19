@@ -63,5 +63,5 @@ model with `--model`. The command expects the `OPENROUTER_API_KEY` environment
 variable to be set. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
 variables allow identifying your integration in OpenRouter dashboards.
 
-The command prints a table for each session document and any nested todo notes
-that belong to it.
+The command prints a table for each todo list document and any nested subcollections
+(e.g. individual todo items) that belong to it.

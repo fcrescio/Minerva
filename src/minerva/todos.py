@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from google.cloud.firestore import Client, DocumentSnapshot
+from google.cloud.firestore import Client, DocumentReference, DocumentSnapshot
 
 
 @dataclass(frozen=True)
