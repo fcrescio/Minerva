@@ -7,13 +7,11 @@ authors = [{ name = "Minerva" }]
 requires-python = ">=3.11"
 dependencies = [
     "google-cloud-firestore>=2.16.0",
-    "httpx>=0.27.0",
     "rich>=13.7.0"
 ]
 
 [project.scripts]
 list-todos = "minerva.main:main"
-summarize-todos = "minerva.pipeline:main"
 
 [tool.uv]
 package = true
