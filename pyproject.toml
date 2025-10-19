@@ -1,0 +1,27 @@
+[project]
+name = "minerva"
+version = "0.1.0"
+description = "CLI tools for reading Diana todo lists from Firestore"
+readme = "README.md"
+authors = [{ name = "Minerva" }]
+requires-python = ">=3.11"
+dependencies = [
+    "google-cloud-firestore>=2.16.0",
+    "rich>=13.7.0"
+]
+
+[project.scripts]
+list-todos = "minerva.main:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
