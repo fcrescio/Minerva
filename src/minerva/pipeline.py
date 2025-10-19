@@ -24,8 +24,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--collection",
-        default="todoLists",
-        help="Name of the Firestore collection that stores the todo lists.",
+        default="sessions",
+        help="Name of the Firestore collection that stores the sessions.",
     )
     parser.add_argument(
         "--credentials",

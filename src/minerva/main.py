@@ -1,4 +1,4 @@
-"""Command line entry point for listing todo lists and items stored in Firestore."""
+"""Command line entry point for listing todo items stored in session notes."""
 from __future__ import annotations
 
 import argparse
@@ -45,7 +45,7 @@ def _render_value(value: object) -> str:
 def format_todo_list(todo_list: TodoList) -> Table:
     """Build a ``rich`` table describing the metadata of a todo list."""
 
-    table = Table(title=f"Todo list: {todo_list.display_title}")
+    table = Table(title=f"Session: {todo_list.display_title}")
     table.add_column("Field")
     table.add_column("Value", overflow="fold")
 
@@ -65,7 +65,7 @@ def build_todos_table(todo_list: TodoList) -> Table | None:
     if not todo_list.todos:
         return None
 
-    table = Table(title=f"Todos for list {todo_list.id}")
+    table = Table(title=f"Todos for session {todo_list.id}")
     table.add_column("#")
     table.add_column("Title", overflow="fold")
     table.add_column("Due", overflow="fold")
@@ -92,7 +92,7 @@ def list_todos(client: Client, collection: str) -> None:
         console.print(f"[yellow]No documents found in collection '{collection}'.")
         return
 
-    console.print(f"[green]Found {len(todo_lists)} todo list(s) in collection '{collection}'.")
+    console.print(f"[green]Found {len(todo_lists)} session(s) in collection '{collection}'.")
 
     for todo_list in todo_lists:
         console.print(format_todo_list(todo_list))
@@ -102,7 +102,7 @@ def list_todos(client: Client, collection: str) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="List todo lists stored in Firestore.")
+    parser = argparse.ArgumentParser(description="List todo items stored in session notes.")
     parser.add_argument(
         "--config",
         default="google-services.json",
@@ -110,8 +110,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--collection",
-        default="todoLists",
-        help="Name of the Firestore collection that stores the todo lists.",
+        default="sessions",
+        help="Name of the Firestore collection that stores the sessions.",
     )
     parser.add_argument(
         "--credentials",

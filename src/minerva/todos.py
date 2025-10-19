@@ -49,20 +49,33 @@ def _build_todo_list(document: DocumentSnapshot) -> TodoList:
         or document.id
     )
 
-    todos = _fetch_todos(document.reference)
+    todos = _fetch_todos(document)
     return TodoList(id=document.id, display_title=str(title), data=data, todos=todos)
 
 
-def _fetch_todos(reference: DocumentReference) -> list[Todo]:
-    todos_collection = reference.collection("todos")
-    snapshots = list(todos_collection.stream())
-    todos = [_build_todo(snapshot) for snapshot in snapshots]
+def _fetch_todos(document: DocumentSnapshot) -> list[Todo]:
+    notes_collection = document.reference.collection("notes")
+    snapshots = list(notes_collection.stream())
+    todos: list[Todo] = []
+    for snapshot in snapshots:
+        data = snapshot.to_dict() or {}
+        if not _is_todo_data(data):
+            continue
+        todos.append(_build_todo(snapshot, data))
     todos.sort(key=_todo_sort_key)
     return todos
 
 
-def _build_todo(snapshot: DocumentSnapshot) -> Todo:
-    data = snapshot.to_dict() or {}
+def _is_todo_data(data: dict[str, Any]) -> bool:
+    todo_type = data.get("type")
+    if isinstance(todo_type, str):
+        return todo_type.lower() == "todo"
+    return False
+
+
+def _build_todo(snapshot: DocumentSnapshot, data: dict[str, Any] | None = None) -> Todo:
+    if data is None:
+        data = snapshot.to_dict() or {}
     title = (
         data.get("title")
         or data.get("name")
@@ -75,18 +88,7 @@ def _build_todo(snapshot: DocumentSnapshot) -> Todo:
     metadata = {
         key: value
         for key, value in data.items()
-        if key
-        not in {
-            "title",
-            "name",
-            "text",
-            "content",
-            "dueDate",
-            "due_date",
-            "completed",
-            "done",
-            "status",
-        }
+        if key not in {"title", "name", "text", "content", "type"}
     }
 
     return Todo(

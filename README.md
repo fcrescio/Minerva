@@ -31,7 +31,7 @@ This project provides a small command line utility for listing todo lists saved 
 
 ## Usage
 
-List all todo lists stored in the default `todoLists` collection:
+List all session documents stored in the default `sessions` collection and show their todo notes:
 
 ```bash
 uv run list-todos
@@ -40,8 +40,8 @@ uv run list-todos
 Command line options:
 
 * `--config` – Path to `google-services.json` (defaults to the repository root).
-* `--collection` – Name of the Firestore collection that stores the todo lists
-  (defaults to `todoLists`).
+* `--collection` – Name of the Firestore collection that stores the sessions
+  (defaults to `sessions`).
 * `--credentials` – Path to the service account JSON file. When omitted the CLI falls
   back to the `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
 
@@ -51,8 +51,8 @@ easy inspection.
 
 ## Summarise todos with an LLM
 
-The project also exposes a processing pipeline that pushes the retrieved todo lists
-to an OpenRouter-hosted LLM and prints the generated summary:
+The project also exposes a processing pipeline that pushes the retrieved session
+todo lists to an OpenRouter-hosted LLM and prints the generated summary:
 
 ```bash
 uv run summarize-todos
