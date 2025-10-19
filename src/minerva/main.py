@@ -1,4 +1,4 @@
-"""Command line entry point for listing todo lists stored in Firestore."""
+"""Command line entry point for listing sessions and notes stored in Firestore."""
 from __future__ import annotations
 
 import argparse
@@ -31,12 +31,18 @@ def build_client(project_id: str, credentials_path: str | None = None) -> Client
         return firestore.Client(project=project_id, credentials=AnonymousCredentials())
 
 
-def format_todo_list(doc: DocumentSnapshot) -> Table:
-    """Build a ``rich`` table representing a todo list document."""
+def format_session(doc: DocumentSnapshot) -> Table:
+    """Build a ``rich`` table representing a session document."""
     data = doc.to_dict() or {}
-    title = data.get("name") or data.get("title") or doc.id
+    title = (
+        data.get("name")
+        or data.get("title")
+        or data.get("startedAt")
+        or data.get("createdAt")
+        or doc.id
+    )
 
-    table = Table(title=f"Todo list: {title}")
+    table = Table(title=f"Session: {title}")
     table.add_column("Field")
     table.add_column("Value", overflow="fold")
 
@@ -53,42 +59,51 @@ def format_todo_list(doc: DocumentSnapshot) -> Table:
     return table
 
 
-def stream_subcollections(doc: DocumentSnapshot) -> Iterable[Table]:
-    """Yield tables for all nested todo items subcollections, if any."""
-    for subcollection in doc.reference.collections():
-        items = list(subcollection.stream())
-        if not items:
-            continue
+def build_notes_table(doc: DocumentSnapshot) -> Table | None:
+    """Return a table with the notes for ``doc`` if any are present."""
 
-        table = Table(title=f"Items in {subcollection.id} for list {doc.id}")
-        table.add_column("Item ID")
-        table.add_column("Fields", overflow="fold")
+    notes_collection = doc.reference.collection("notes")
+    notes = list(notes_collection.stream())
+    if not notes:
+        return None
 
-        for item in items:
-            item_data = item.to_dict() or {}
-            description = ", ".join(f"{k}={v!r}" for k, v in sorted(item_data.items())) or "<empty>"
-            table.add_row(item.id, description)
+    table = Table(title=f"Notes for session {doc.id}")
+    table.add_column("Note ID")
+    table.add_column("Content", overflow="fold")
+    table.add_column("Metadata", overflow="fold")
 
-        yield table
+    for note in notes:
+        data = note.to_dict() or {}
+        content = data.get("content") or data.get("text") or data.get("note") or "<empty>"
+        metadata_items = [
+            f"{key}={value!r}"
+            for key, value in sorted(data.items())
+            if key not in {"content", "text", "note"}
+        ]
+        metadata = ", ".join(metadata_items) or "<no metadata>"
+        table.add_row(note.id, str(content), metadata)
+
+    return table
 
 
-def list_todo_lists(client: Client, collection: str) -> None:
-    """Fetch todo lists from Firestore and print them."""
+def list_sessions(client: Client, collection: str) -> None:
+    """Fetch sessions from Firestore and print them along with their notes."""
     documents = list(client.collection(collection).stream())
     if not documents:
         console.print(f"[yellow]No documents found in collection '{collection}'.")
         return
 
-    console.print(f"[green]Found {len(documents)} todo list(s) in collection '{collection}'.")
+    console.print(f"[green]Found {len(documents)} session(s) in collection '{collection}'.")
 
     for document in documents:
-        console.print(format_todo_list(document))
-        for table in stream_subcollections(document):
-            console.print(table)
+        console.print(format_session(document))
+        notes_table = build_notes_table(document)
+        if notes_table:
+            console.print(notes_table)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="List todo lists stored in Firestore.")
+    parser = argparse.ArgumentParser(description="List sessions stored in Firestore.")
     parser.add_argument(
         "--config",
         default="google-services.json",
@@ -96,8 +111,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--collection",
-        default="todoLists",
-        help="Name of the Firestore collection that stores todo lists.",
+        default="sessions",
+        help="Name of the Firestore collection that stores sessions.",
     )
     parser.add_argument(
         "--credentials",
@@ -115,7 +130,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config = FirebaseConfig.from_google_services(args.config)
     client = build_client(config.project_id, args.credentials)
-    list_todo_lists(client, args.collection)
+    list_sessions(client, args.collection)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
