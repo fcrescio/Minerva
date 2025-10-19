@@ -45,5 +45,23 @@ Command line options:
 * `--credentials` – Path to the service account JSON file. When omitted the CLI falls
   back to the `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
 
+Todo items are displayed in chronological order, with the closest `dueDate` first
+and undated entries listed last. Each todo retains its associated metadata for
+easy inspection.
+
+## Summarise todos with an LLM
+
+The project also exposes a processing pipeline that pushes the retrieved todo lists
+to an OpenRouter-hosted LLM and prints the generated summary:
+
+```bash
+uv run summarize-todos
+```
+
+Additional options mirror those of `list-todos`, and you can override the target
+model with `--model`. The command expects the `OPENROUTER_API_KEY` environment
+variable to be set. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
+variables allow identifying your integration in OpenRouter dashboards.
+
 The command prints a table for each todo list document and any nested subcollections
 (e.g. individual todo items) that belong to it.
