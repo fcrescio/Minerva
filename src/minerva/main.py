@@ -5,6 +5,7 @@ import argparse
 import os
 from collections.abc import Iterable
 
+from google.auth.credentials import AnonymousCredentials
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import firestore
 from google.cloud.firestore import Client, DocumentSnapshot
@@ -23,13 +24,11 @@ def build_client(project_id: str, credentials_path: str | None = None) -> Client
 
     try:
         return firestore.Client(project=project_id)
-    except DefaultCredentialsError as exc:  # pragma: no cover - informative path
-        hint = (
-            "No Google Cloud credentials were found. Set the "
-            "GOOGLE_APPLICATION_CREDENTIALS environment variable to a service "
-            "account JSON file or pass --credentials."
-        )
-        raise RuntimeError(hint) from exc
+    except DefaultCredentialsError:
+        # Fall back to anonymous access when no credentials are available. This
+        # allows read-only access to publicly readable Firestore instances or
+        # local emulators without requiring service account credentials.
+        return firestore.Client(project=project_id, credentials=AnonymousCredentials())
 
 
 def format_todo_list(doc: DocumentSnapshot) -> Table:
