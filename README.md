@@ -31,7 +31,7 @@ This project provides a small command line utility for listing todo lists saved 
 
 ## Usage
 
-List all todo lists stored in the default `todoLists` collection:
+List all session documents stored in the default `sessions` collection and show their todo notes:
 
 ```bash
 uv run list-todos
@@ -40,10 +40,28 @@ uv run list-todos
 Command line options:
 
 * `--config` – Path to `google-services.json` (defaults to the repository root).
-* `--collection` – Name of the Firestore collection that stores the todo lists
-  (defaults to `todoLists`).
+* `--collection` – Name of the Firestore collection that stores the sessions
+  (defaults to `sessions`).
 * `--credentials` – Path to the service account JSON file. When omitted the CLI falls
   back to the `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
 
-The command prints a table for each todo list document and any nested subcollections
-(e.g. individual todo items) that belong to it.
+Todo items are displayed in chronological order, with the closest `dueDate` first
+and undated entries listed last. Each todo retains its associated metadata for
+easy inspection.
+
+## Summarise todos with an LLM
+
+The project also exposes a processing pipeline that pushes the retrieved session
+todo lists to an OpenRouter-hosted LLM and prints the generated summary:
+
+```bash
+uv run summarize-todos
+```
+
+Additional options mirror those of `list-todos`, and you can override the target
+model with `--model`. The command expects the `OPENROUTER_API_KEY` environment
+variable to be set. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
+variables allow identifying your integration in OpenRouter dashboards.
+
+The command prints a table for each session document and any nested todo notes
+that belong to it.
