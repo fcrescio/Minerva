@@ -325,7 +325,7 @@ def _extract_audio_urls(payload: object) -> Iterator[str]:
 
     if isinstance(payload, dict):
         logger.debug("Inspecting dict payload keys: %s", list(payload))
-        for key in ("audio", "audios"):
+        for key in ("audio", "url"):
             if key in payload:
                 yield from _extract_audio_urls(payload[key])
         for value in payload.values():
