@@ -88,6 +88,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "environment variable or INFO when unset."
         ),
     )
+    parser.add_argument(
+        "--speech",
+        dest="speech",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Generate an audio narration of the summary using fal.ai. "
+            "Disable with --no-speech."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -381,12 +391,15 @@ def main(argv: list[str] | None = None) -> None:
     logger.debug("Generated summary with %d characters", len(summary))
     print(summary)
 
-    speech_path = synthesise_speech(summary)
-    if speech_path:
-        logger.debug("Speech synthesis successful: %s", speech_path)
-        print(f"\nSpeech saved to: {speech_path}")
+    if args.speech:
+        speech_path = synthesise_speech(summary)
+        if speech_path:
+            logger.debug("Speech synthesis successful: %s", speech_path)
+            print(f"\nSpeech saved to: {speech_path}")
+        else:
+            logger.debug("Speech synthesis skipped or failed")
     else:
-        logger.debug("Speech synthesis skipped or failed")
+        logger.debug("Speech synthesis disabled via CLI option")
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
