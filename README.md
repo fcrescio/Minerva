@@ -52,15 +52,17 @@ easy inspection.
 ## Summarise todos with an LLM
 
 The project also exposes a processing pipeline that pushes the retrieved session
-todo lists to an OpenRouter-hosted LLM and prints the generated summary:
+todo lists to an LLM provider (OpenRouter by default) and prints the generated
+summary:
 
 ```bash
 uv run summarize-todos
 ```
 
-Additional options mirror those of `list-todos`, and you can override the target
-model with `--model`. The command expects the `OPENROUTER_API_KEY` environment
-variable to be set. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
+Additional options mirror those of `list-todos`. You can select the provider with
+`--provider` (`openrouter` or `groq`) and override the target model with
+`--model`. Depending on the provider you must set either `OPENROUTER_API_KEY` or
+`GROQ_API_KEY`. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
 variables allow identifying your integration in OpenRouter dashboards.
 
 The command prints a table for each todo list document and any nested subcollections

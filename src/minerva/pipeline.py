@@ -1,4 +1,4 @@
-"""Processing pipeline that summarises todos using an OpenRouter-hosted LLM."""
+"""Processing pipeline that summarises todos using an LLM provider."""
 from __future__ import annotations
 
 import argparse
@@ -7,16 +7,29 @@ import os
 from typing import Iterable
 
 import httpx
+from groq import Groq
 
 from .config import FirebaseConfig
 from .main import build_client
 from .todos import Todo, TodoList, fetch_todo_lists
 
-DEFAULT_MODEL = "mistralai/mistral-nemo"
+DEFAULT_MODELS = {
+    "openrouter": "mistralai/mistral-nemo",
+    "groq": "mixtral-8x7b-32768",
+}
+
+SYSTEM_PROMPT = (
+    "You are a helpful assistant that generates concise summaries of todo lists. "
+    "Highlight overdue or upcoming items and mention items lacking due dates when relevant. "
+    "Provide the answer in natural speech to be read out loud. Do not use characters or text structures that can't be read out loud. "
+    "Answer in italian language"
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Summarise todos with an LLM via OpenRouter.")
+    parser = argparse.ArgumentParser(
+        description="Summarise todos with an LLM via OpenRouter or Groq."
+    )
     parser.add_argument(
         "--config",
         default="google-services.json",
@@ -36,9 +49,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--provider",
+        choices=sorted(DEFAULT_MODELS),
+        default="openrouter",
+        help="LLM provider to use for summarisation.",
+    )
+    parser.add_argument(
         "--model",
-        default=DEFAULT_MODEL,
-        help="Fully qualified OpenRouter model identifier to use for summarisation.",
+        default=None,
+        help="Model identifier to use for summarisation. Defaults depend on the provider.",
     )
     parser.add_argument(
         "--temperature",
@@ -74,15 +93,7 @@ def summarise_with_openrouter(
         "model": model,
         "temperature": temperature,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a helpful assistant that generates concise summaries of todo lists. "
-                    "Highlight overdue or upcoming items and mention items lacking due dates when relevant."
-                    "Provide the answer in natural speech to be read out loud. Do not use characters or text structures that can't be read out loud."
-                    "Answer in italian language"
-                ),
-            },
+            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
     }
@@ -97,8 +108,6 @@ def summarise_with_openrouter(
         "X-Title": os.environ.get("OPENROUTER_APP_TITLE", "Minerva Todo Summariser"),
     }
 
-    print(headers)
-    print(payload)
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -112,6 +121,44 @@ def summarise_with_openrouter(
         return data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:  # pragma: no cover - defensive fallback
         raise RuntimeError("Unexpected response from OpenRouter") from exc
+
+
+def summarise_with_groq(
+    todos: Iterable[TodoList],
+    *,
+    model: str,
+    temperature: float = 0.2,
+    max_output_tokens: int | None = None,
+) -> str:
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY environment variable is not set.")
+
+    prompt = _build_prompt(todos)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+    client = Groq(api_key=api_key)
+    kwargs: dict[str, object] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": 1,
+        "stream": True,
+    }
+    if max_output_tokens is not None:
+        kwargs["max_completion_tokens"] = max_output_tokens
+
+    completion = client.chat.completions.create(**kwargs)
+    parts: list[str] = []
+    for chunk in completion:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            parts.append(delta)
+
+    return "".join(parts).strip()
 
 
 def _build_prompt(todo_lists: Iterable[TodoList]) -> str:
@@ -151,12 +198,22 @@ def main(argv: list[str] | None = None) -> None:
         print("No todo lists found; nothing to summarise.")
         return
 
-    summary = summarise_with_openrouter(
-        todo_lists,
-        model=args.model,
-        temperature=args.temperature,
-        max_output_tokens=args.max_output_tokens,
-    )
+    model = args.model or DEFAULT_MODELS[args.provider]
+
+    if args.provider == "groq":
+        summary = summarise_with_groq(
+            todo_lists,
+            model=model,
+            temperature=args.temperature,
+            max_output_tokens=args.max_output_tokens,
+        )
+    else:
+        summary = summarise_with_openrouter(
+            todo_lists,
+            model=model,
+            temperature=args.temperature,
+            max_output_tokens=args.max_output_tokens,
+        )
     print(summary)
 
 
