@@ -53,7 +53,9 @@ easy inspection.
 
 The project also exposes a processing pipeline that pushes the retrieved session
 todo lists to an LLM provider (OpenRouter by default) and prints the generated
-summary:
+summary. When available, the summary is additionally synthesised into a speech
+track using [fal.ai](https://fal.ai) and saved to `todo-summary.wav` in the
+current directory:
 
 ```bash
 uv run summarize-todos
@@ -63,7 +65,9 @@ Additional options mirror those of `list-todos`. You can select the provider wit
 `--provider` (`openrouter` or `groq`) and override the target model with
 `--model`. Depending on the provider you must set either `OPENROUTER_API_KEY` or
 `GROQ_API_KEY`. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
-variables allow identifying your integration in OpenRouter dashboards.
+variables allow identifying your integration in OpenRouter dashboards. To
+receive the audio summary you must also export a `FAL_KEY` with your fal.ai API
+token.
 
 The command prints a table for each todo list document and any nested subcollections
 (e.g. individual todo items) that belong to it.

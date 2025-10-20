@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import Iterable
+import sys
+from pathlib import Path
+from typing import Iterable, Iterator
 
 import httpx
 from groq import Groq
@@ -189,6 +191,103 @@ def _format_todo_for_prompt(todo: Todo) -> str:
     return f"{headline} ({details})"
 
 
+def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav") -> Path | None:
+    """Generate a spoken rendition of ``summary`` using fal.ai.
+
+    When the ``FAL_KEY`` environment variable or the ``fal-client`` dependency are
+    missing, the function returns ``None`` without raising so the CLI keeps
+    working as a text-only tool. The generated audio is stored in
+    ``output_filename`` relative to the current working directory.
+    """
+
+    api_key = os.environ.get("FAL_KEY")
+    if not api_key:
+        print(
+            "FAL_KEY environment variable is not set; skipping speech synthesis.",
+            file=sys.stderr,
+        )
+        return None
+
+    try:
+        import fal_client
+    except ImportError:  # pragma: no cover - optional dependency guard
+        print(
+            "fal-client is not installed; skipping speech synthesis.",
+            file=sys.stderr,
+        )
+        return None
+
+    if hasattr(fal_client, "api_key"):
+        try:
+            fal_client.api_key = api_key  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - defensive fallback
+            pass
+
+    def on_queue_update(update: object) -> None:
+        if isinstance(update, fal_client.InProgress):  # type: ignore[attr-defined]
+            for log in getattr(update, "logs", []) or []:
+                message = log.get("message") if isinstance(log, dict) else None
+                if message:
+                    print(message, file=sys.stderr)
+
+    try:
+        result = fal_client.subscribe(  # type: ignore[call-arg]
+            "fal-ai/vibevoice/7b",
+            arguments={
+                "script": summary,
+                "speakers": [{"preset": "Anchen [ZH] (Background Music)"}],
+                "cfg_scale": 1.3,
+            },
+            with_logs=True,
+            on_queue_update=on_queue_update,
+        )
+    except Exception as exc:  # pragma: no cover - network call
+        print(f"Failed to synthesise speech with fal.ai: {exc}", file=sys.stderr)
+        return None
+
+    audio_urls = list(_extract_audio_urls(result))
+    if not audio_urls:
+        print(
+            "fal.ai response did not contain audio URLs; skipping speech synthesis.",
+            file=sys.stderr,
+        )
+        return None
+
+    output_path = Path(output_filename)
+    audio_url = audio_urls[0]
+    try:
+        with httpx.Client(timeout=120.0) as client:  # pragma: no cover - network call
+            response = client.get(audio_url)
+            response.raise_for_status()
+        output_path.write_bytes(response.content)
+    except Exception as exc:  # pragma: no cover - network call
+        print(f"Unable to download fal.ai audio: {exc}", file=sys.stderr)
+        return None
+
+    return output_path
+
+
+def _extract_audio_urls(payload: object) -> Iterator[str]:
+    """Yield audio URLs from the fal.ai response payload."""
+
+    if isinstance(payload, dict):
+        for key in ("audio", "audios"):
+            if key in payload:
+                yield from _extract_audio_urls(payload[key])
+        for value in payload.values():
+            if isinstance(value, (dict, list)):
+                yield from _extract_audio_urls(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield from _extract_audio_urls(item)
+    elif isinstance(payload, str):
+        if payload.startswith("http"):
+            yield payload
+    elif isinstance(payload, tuple):  # pragma: no cover - defensive branch
+        for item in payload:
+            yield from _extract_audio_urls(item)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config = FirebaseConfig.from_google_services(args.config)
@@ -215,6 +314,10 @@ def main(argv: list[str] | None = None) -> None:
             max_output_tokens=args.max_output_tokens,
         )
     print(summary)
+
+    speech_path = synthesise_speech(summary)
+    if speech_path:
+        print(f"\nSpeech saved to: {speech_path}")
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
