@@ -46,6 +46,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=0.2,
         help="Sampling temperature supplied to the chat completion request.",
     )
+    parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=1024,
+        help=(
+            "Maximum number of tokens the model is allowed to generate. "
+            "OpenRouter requires this for some providers such as Anthropic."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -54,13 +63,14 @@ def summarise_with_openrouter(
     *,
     model: str,
     temperature: float = 0.2,
+    max_output_tokens: int | None = None,
 ) -> str:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY environment variable is not set.")
 
     prompt = _build_prompt(todos)
-    payload = {
+    payload: dict[str, object] = {
         "model": model,
         "temperature": temperature,
         "messages": [
@@ -74,6 +84,9 @@ def summarise_with_openrouter(
             {"role": "user", "content": prompt},
         ],
     }
+
+    if max_output_tokens is not None:
+        payload["max_output_tokens"] = max_output_tokens
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -138,6 +151,7 @@ def main(argv: list[str] | None = None) -> None:
         todo_lists,
         model=args.model,
         temperature=args.temperature,
+        max_output_tokens=args.max_output_tokens,
     )
     print(summary)
 
