@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -12,8 +13,11 @@ import httpx
 from groq import Groq
 
 from .config import FirebaseConfig
+from .logging_utils import configure_logging
 from .main import build_client
 from .todos import Todo, TodoList, fetch_todo_lists
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODELS = {
     "openrouter": "mistralai/mistral-nemo",
@@ -76,6 +80,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "OpenRouter requires this for some providers such as Anthropic."
         ),
     )
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        help=(
+            "Logging level (e.g. DEBUG, INFO). Defaults to the MINERVA_LOG_LEVEL "
+            "environment variable or INFO when unset."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -91,6 +103,12 @@ def summarise_with_openrouter(
         raise RuntimeError("OPENROUTER_API_KEY environment variable is not set.")
 
     prompt = _build_prompt(todos)
+    logger.debug(
+        "Submitting OpenRouter request with model=%s temperature=%s max_output_tokens=%s",
+        model,
+        temperature,
+        max_output_tokens,
+    )
     payload: dict[str, object] = {
         "model": model,
         "temperature": temperature,
@@ -102,6 +120,7 @@ def summarise_with_openrouter(
 
     if max_output_tokens is not None:
         payload["max_output_tokens"] = max_output_tokens
+        logger.debug("Set OpenRouter max_output_tokens to %s", max_output_tokens)
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -111,14 +130,17 @@ def summarise_with_openrouter(
     }
 
     with httpx.Client(timeout=60.0) as client:
+        logger.debug("Sending POST request to OpenRouter")
         response = client.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
             content=json.dumps(payload),
         )
         response.raise_for_status()
+        logger.debug("OpenRouter request completed with status %s", response.status_code)
 
     data = response.json()
+    logger.debug("OpenRouter response keys: %s", list(data) if isinstance(data, dict) else type(data))
     try:
         return data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:  # pragma: no cover - defensive fallback
@@ -137,6 +159,12 @@ def summarise_with_groq(
         raise RuntimeError("GROQ_API_KEY environment variable is not set.")
 
     prompt = _build_prompt(todos)
+    logger.debug(
+        "Submitting Groq request with model=%s temperature=%s max_output_tokens=%s",
+        model,
+        temperature,
+        max_output_tokens,
+    )
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
@@ -152,6 +180,7 @@ def summarise_with_groq(
     }
     if max_output_tokens is not None:
         kwargs["max_completion_tokens"] = max_output_tokens
+        logger.debug("Set Groq max_completion_tokens to %s", max_output_tokens)
 
     completion = client.chat.completions.create(**kwargs)
     parts: list[str] = []
@@ -159,6 +188,7 @@ def summarise_with_groq(
         delta = chunk.choices[0].delta.content
         if delta:
             parts.append(delta)
+            logger.debug("Received Groq delta chunk with %d characters", len(delta))
 
     return "".join(parts).strip()
 
@@ -166,8 +196,10 @@ def summarise_with_groq(
 def _build_prompt(todo_lists: Iterable[TodoList]) -> str:
     lines = ["Provide a summary for the following todo lists:"]
     for todo_list in todo_lists:
+        logger.debug("Adding todo list %s to prompt", todo_list.id)
         lines.append(f"\nList: {todo_list.display_title} (id={todo_list.id})")
         if not todo_list.todos:
+            logger.debug("Todo list %s has no todos", todo_list.id)
             lines.append("  - No todos recorded.")
             continue
         for todo in todo_list.todos:
@@ -188,6 +220,12 @@ def _format_todo_for_prompt(todo: Todo) -> str:
         meta = ", ".join(f"{key}={value!r}" for key, value in sorted(todo.metadata.items()))
         parts.append(f"details: {meta}")
     details = ", ".join(parts)
+    logger.debug(
+        "Formatted todo %s for prompt: headline=%r details=%r",
+        todo.id,
+        headline,
+        details,
+    )
     return f"{headline} ({details})"
 
 
@@ -200,8 +238,10 @@ def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav"
     ``output_filename`` relative to the current working directory.
     """
 
+    logger.debug("Starting speech synthesis for summary with %d characters", len(summary))
     api_key = os.environ.get("FAL_KEY")
     if not api_key:
+        logger.debug("FAL_KEY environment variable is missing; skipping speech synthesis")
         print(
             "FAL_KEY environment variable is not set; skipping speech synthesis.",
             file=sys.stderr,
@@ -211,6 +251,7 @@ def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav"
     try:
         import fal_client
     except ImportError:  # pragma: no cover - optional dependency guard
+        logger.debug("fal-client dependency not available; skipping speech synthesis")
         print(
             "fal-client is not installed; skipping speech synthesis.",
             file=sys.stderr,
@@ -220,17 +261,22 @@ def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav"
     if hasattr(fal_client, "api_key"):
         try:
             fal_client.api_key = api_key  # type: ignore[attr-defined]
+            logger.debug("Configured fal_client.api_key attribute")
         except Exception:  # pragma: no cover - defensive fallback
+            logger.debug("Unable to assign fal_client.api_key attribute", exc_info=True)
             pass
 
     def on_queue_update(update: object) -> None:
+        logger.debug("Received fal.ai queue update: %s", type(update))
         if isinstance(update, fal_client.InProgress):  # type: ignore[attr-defined]
             for log in getattr(update, "logs", []) or []:
                 message = log.get("message") if isinstance(log, dict) else None
                 if message:
+                    logger.debug("fal.ai log message: %s", message)
                     print(message, file=sys.stderr)
 
     try:
+        logger.debug("Subscribing to fal.ai synthesis stream")
         result = fal_client.subscribe(  # type: ignore[call-arg]
             "fal-ai/vibevoice/7b",
             arguments={
@@ -241,12 +287,16 @@ def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav"
             with_logs=True,
             on_queue_update=on_queue_update,
         )
+        logger.debug("fal.ai subscribe() returned payload of type %s", type(result))
     except Exception as exc:  # pragma: no cover - network call
+        logger.exception("Failed to synthesise speech with fal.ai")
         print(f"Failed to synthesise speech with fal.ai: {exc}", file=sys.stderr)
         return None
 
     audio_urls = list(_extract_audio_urls(result))
+    logger.debug("Extracted %d audio URL(s) from fal.ai response", len(audio_urls))
     if not audio_urls:
+        logger.debug("fal.ai response payload contained no audio URLs: %r", result)
         print(
             "fal.ai response did not contain audio URLs; skipping speech synthesis.",
             file=sys.stderr,
@@ -255,12 +305,15 @@ def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav"
 
     output_path = Path(output_filename)
     audio_url = audio_urls[0]
+    logger.debug("Downloading audio from %s to %s", audio_url, output_path)
     try:
         with httpx.Client(timeout=120.0) as client:  # pragma: no cover - network call
             response = client.get(audio_url)
             response.raise_for_status()
         output_path.write_bytes(response.content)
+        logger.debug("Audio download completed successfully; %d bytes written", output_path.stat().st_size)
     except Exception as exc:  # pragma: no cover - network call
+        logger.exception("Unable to download fal.ai audio")
         print(f"Unable to download fal.ai audio: {exc}", file=sys.stderr)
         return None
 
@@ -271,6 +324,7 @@ def _extract_audio_urls(payload: object) -> Iterator[str]:
     """Yield audio URLs from the fal.ai response payload."""
 
     if isinstance(payload, dict):
+        logger.debug("Inspecting dict payload keys: %s", list(payload))
         for key in ("audio", "audios"):
             if key in payload:
                 yield from _extract_audio_urls(payload[key])
@@ -278,26 +332,37 @@ def _extract_audio_urls(payload: object) -> Iterator[str]:
             if isinstance(value, (dict, list)):
                 yield from _extract_audio_urls(value)
     elif isinstance(payload, list):
+        logger.debug("Inspecting list payload with %d elements", len(payload))
         for item in payload:
             yield from _extract_audio_urls(item)
     elif isinstance(payload, str):
         if payload.startswith("http"):
+            logger.debug("Found audio URL candidate: %s", payload)
             yield payload
+        else:
+            logger.debug("Ignoring non-http string payload: %s", payload)
     elif isinstance(payload, tuple):  # pragma: no cover - defensive branch
+        logger.debug("Inspecting tuple payload with %d elements", len(payload))
         for item in payload:
             yield from _extract_audio_urls(item)
+    else:
+        logger.debug("Ignoring payload of type %s", type(payload))
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    configure_logging(args.log_level)
+    logger.debug("CLI arguments: %s", args)
     config = FirebaseConfig.from_google_services(args.config)
     client = build_client(config.project_id, args.credentials)
     todo_lists = fetch_todo_lists(client, args.collection)
+    logger.debug("Fetched %d todo lists for summarisation", len(todo_lists))
     if not todo_lists:
         print("No todo lists found; nothing to summarise.")
         return
 
     model = args.model or DEFAULT_MODELS[args.provider]
+    logger.debug("Using provider %s with model %s", args.provider, model)
 
     if args.provider == "groq":
         summary = summarise_with_groq(
@@ -313,11 +378,15 @@ def main(argv: list[str] | None = None) -> None:
             temperature=args.temperature,
             max_output_tokens=args.max_output_tokens,
         )
+    logger.debug("Generated summary with %d characters", len(summary))
     print(summary)
 
     speech_path = synthesise_speech(summary)
     if speech_path:
+        logger.debug("Speech synthesis successful: %s", speech_path)
         print(f"\nSpeech saved to: {speech_path}")
+    else:
+        logger.debug("Speech synthesis skipped or failed")
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
