@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from collections.abc import Iterable, Mapping
 from datetime import datetime
@@ -14,26 +15,33 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import FirebaseConfig
+from .logging_utils import configure_logging
 from .todos import TodoList, fetch_todo_lists
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 def build_client(project_id: str, credentials_path: str | None = None) -> Client:
     """Create a Firestore client using the preferred credentials strategy."""
+    logger.debug("Building Firestore client for project %s", project_id)
     if credentials_path:
+        logger.debug("Using explicit credentials file %s", credentials_path)
         return firestore.Client.from_service_account_json(credentials_path, project=project_id)
 
     try:
+        logger.debug("Attempting to use default credentials")
         return firestore.Client(project=project_id)
     except DefaultCredentialsError:
         # Fall back to anonymous access when no credentials are available. This
         # allows read-only access to publicly readable Firestore instances or
         # local emulators without requiring service account credentials.
+        logger.debug("Default credentials unavailable; falling back to anonymous credentials")
         return firestore.Client(project=project_id, credentials=AnonymousCredentials())
 
 
 def _render_value(value: object) -> str:
+    logger.debug("Rendering value for display: %r", value)
     if isinstance(value, Mapping):
         items = ", ".join(f"{key}={val!r}" for key, val in sorted(value.items()))
         return items or "<empty mapping>"
@@ -45,6 +53,7 @@ def _render_value(value: object) -> str:
 def format_todo_list(todo_list: TodoList) -> Table:
     """Build a ``rich`` table describing the metadata of a todo list."""
 
+    logger.debug("Formatting todo list %s with %d fields", todo_list.id, len(todo_list.data))
     table = Table(title=f"Session: {todo_list.display_title}")
     table.add_column("Field")
     table.add_column("Value", overflow="fold")
@@ -62,6 +71,7 @@ def format_todo_list(todo_list: TodoList) -> Table:
 def build_todos_table(todo_list: TodoList) -> Table | None:
     """Return a table with the todos for ``todo_list`` if any are present."""
 
+    logger.debug("Building todos table for %s with %d todos", todo_list.id, len(todo_list.todos))
     if not todo_list.todos:
         return None
 
@@ -87,7 +97,9 @@ def build_todos_table(todo_list: TodoList) -> Table | None:
 def list_todos(client: Client, collection: str) -> None:
     """Fetch todo lists from Firestore and print them along with their items."""
 
+    logger.debug("Listing todos from collection %s", collection)
     todo_lists = fetch_todo_lists(client, collection)
+    logger.debug("Fetched %d todo lists", len(todo_lists))
     if not todo_lists:
         console.print(f"[yellow]No documents found in collection '{collection}'.")
         return
@@ -121,12 +133,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Defaults to the GOOGLE_APPLICATION_CREDENTIALS environment variable."
         ),
     )
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        help=(
+            "Logging level (e.g. DEBUG, INFO). Defaults to the MINERVA_LOG_LEVEL "
+            "environment variable or INFO when unset."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    configure_logging(args.log_level)
+    logger.debug("CLI arguments: %s", args)
     config = FirebaseConfig.from_google_services(args.config)
     client = build_client(config.project_id, args.credentials)
     list_todos(client, args.collection)
