@@ -12,7 +12,7 @@ from .config import FirebaseConfig
 from .main import build_client
 from .todos import Todo, TodoList, fetch_todo_lists
 
-DEFAULT_MODEL = "openrouter/anthropic/claude-3-haiku"
+DEFAULT_MODEL = "mistralai/mistral-nemo"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -79,6 +79,8 @@ def summarise_with_openrouter(
                 "content": (
                     "You are a helpful assistant that generates concise summaries of todo lists. "
                     "Highlight overdue or upcoming items and mention items lacking due dates when relevant."
+                    "Provide the answer in natural speech to be read out loud. Do not use characters or text structures that can't be read out loud."
+                    "Answer in italian language"
                 ),
             },
             {"role": "user", "content": prompt},
@@ -95,6 +97,8 @@ def summarise_with_openrouter(
         "X-Title": os.environ.get("OPENROUTER_APP_TITLE", "Minerva Todo Summariser"),
     }
 
+    print(headers)
+    print(payload)
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
             "https://openrouter.ai/api/v1/chat/completions",
