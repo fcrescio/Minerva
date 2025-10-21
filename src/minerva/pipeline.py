@@ -5,12 +5,16 @@ import argparse
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable, Iterator
 
 import httpx
 from groq import Groq
+from telegram import Bot
+from telegram.error import TelegramError
 
 from .config import FirebaseConfig
 from .logging_utils import configure_logging
@@ -96,6 +100,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Generate an audio narration of the summary using fal.ai. "
             "Disable with --no-speech."
+        ),
+    )
+    parser.add_argument(
+        "--telegram",
+        dest="telegram",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Post the generated speech track to Telegram. Requires a bot token "
+            "and target chat ID. Disable with --no-telegram."
+        ),
+    )
+    parser.add_argument(
+        "--telegram-token",
+        default=os.environ.get("TELEGRAM_BOT_TOKEN"),
+        help=(
+            "Telegram bot token. Defaults to the TELEGRAM_BOT_TOKEN environment "
+            "variable."
+        ),
+    )
+    parser.add_argument(
+        "--telegram-chat-id",
+        default=os.environ.get("TELEGRAM_CHAT_ID"),
+        help=(
+            "Telegram chat or channel ID where the audio should be posted. "
+            "Defaults to the TELEGRAM_CHAT_ID environment variable."
         ),
     )
     return parser.parse_args(argv)
@@ -330,6 +360,79 @@ def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav"
     return output_path
 
 
+def convert_audio_to_ogg_opus(audio_path: Path) -> Path:
+    """Convert ``audio_path`` to an OGG/Opus voice note for Telegram."""
+
+    if audio_path.suffix.lower() == ".ogg":
+        logger.debug("Audio already in OGG format: %s", audio_path)
+        return audio_path
+
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        raise RuntimeError(
+            "ffmpeg is required to convert audio to Telegram voice message format."
+        )
+
+    output_path = audio_path.with_suffix(".ogg")
+    command = [
+        ffmpeg_path,
+        "-y",
+        "-i",
+        str(audio_path),
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "64k",
+        "-ac",
+        "1",
+        str(output_path),
+    ]
+
+    logger.debug("Running ffmpeg to convert %s to %s", audio_path, output_path)
+    try:
+        subprocess.run(command, check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - external tool
+        logger.exception("ffmpeg failed with exit code %s", exc.returncode)
+        raise RuntimeError("Failed to convert audio to OGG/Opus with ffmpeg") from exc
+
+    logger.debug("ffmpeg conversion succeeded; generated %s", output_path)
+    return output_path
+
+
+def post_summary_to_telegram(
+    audio_path: Path,
+    *,
+    token: str,
+    chat_id: str,
+    caption: str | None = None,
+) -> None:
+    """Upload ``audio_path`` to a Telegram chat using the provided bot credentials."""
+
+    logger.debug("Posting audio %s to Telegram chat %s", audio_path, chat_id)
+    if not audio_path.exists():
+        raise FileNotFoundError(audio_path)
+
+    caption_text = caption or "Todo summary"
+    if len(caption_text) > 1024:
+        caption_text = f"{caption_text[:1021]}..."
+        logger.debug("Truncated caption to 1024 characters for Telegram")
+
+    try:
+        voice_path = convert_audio_to_ogg_opus(audio_path)
+    except Exception:
+        logger.exception("Unable to prepare audio for Telegram voice message")
+        raise
+
+    bot = Bot(token=token)
+    try:
+        with voice_path.open("rb") as audio_file:
+            bot.send_voice(chat_id=chat_id, voice=audio_file, caption=caption_text)
+        logger.debug("Telegram upload completed successfully")
+    except TelegramError:
+        logger.exception("Failed to send audio to Telegram")
+        raise
+
+
 def _extract_audio_urls(payload: object) -> Iterator[str]:
     """Yield audio URLs from the fal.ai response payload."""
 
@@ -400,6 +503,32 @@ def main(argv: list[str] | None = None) -> None:
             logger.debug("Speech synthesis skipped or failed")
     else:
         logger.debug("Speech synthesis disabled via CLI option")
+        speech_path = None
+
+    if args.telegram:
+        if not speech_path:
+            logger.debug("Telegram upload requested but no speech file is available")
+            print(
+                "Telegram upload requested but no speech file was generated.",
+                file=sys.stderr,
+            )
+        elif not args.telegram_token or not args.telegram_chat_id:
+            logger.debug("Telegram credentials are missing; skipping upload")
+            print(
+                "Telegram bot token or chat ID missing; skipping Telegram upload.",
+                file=sys.stderr,
+            )
+        else:
+            try:
+                post_summary_to_telegram(
+                    speech_path,
+                    token=args.telegram_token,
+                    chat_id=args.telegram_chat_id,
+                    caption=summary,
+                )
+                print("Telegram upload completed successfully.")
+            except TelegramError as exc:
+                print(f"Failed to upload summary to Telegram: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
