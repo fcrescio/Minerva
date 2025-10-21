@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ from typing import Iterable, Iterator
 
 import httpx
 from groq import Groq
-from telegram import Bot
+from telegram import Bot, InputFile
 from telegram.error import TelegramError
 
 from .config import FirebaseConfig
@@ -423,10 +424,17 @@ def post_summary_to_telegram(
         logger.exception("Unable to prepare audio for Telegram voice message")
         raise
 
-    bot = Bot(token=token)
+    async def _send_voice_async() -> None:
+        async with Bot(token=token) as bot:
+            voice_file = InputFile.from_path(voice_path)
+            await bot.send_voice(
+                chat_id=chat_id,
+                voice=voice_file,
+                caption=caption_text,
+            )
+
     try:
-        with voice_path.open("rb") as audio_file:
-            bot.send_voice(chat_id=chat_id, voice=audio_file, caption=caption_text)
+        asyncio.run(_send_voice_async())
         logger.debug("Telegram upload completed successfully")
     except TelegramError:
         logger.exception("Failed to send audio to Telegram")
