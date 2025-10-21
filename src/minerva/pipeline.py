@@ -114,6 +114,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--skip-summary",
+        dest="skip_summary",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Skip LLM summarisation and reuse an existing audio file when "
+            "uploading to Telegram."
+        ),
+    )
+    parser.add_argument(
+        "--existing-audio",
+        default="todo_summary.ogg",
+        help=(
+            "Path to an existing audio file to upload when --skip-summary is "
+            "enabled."
+        ),
+    )
+    parser.add_argument(
         "--telegram-token",
         default=os.environ.get("TELEGRAM_BOT_TOKEN"),
         help=(
@@ -474,44 +492,57 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(args.log_level)
     logger.debug("CLI arguments: %s", args)
-    config = FirebaseConfig.from_google_services(args.config)
-    client = build_client(config.project_id, args.credentials)
-    todo_lists = fetch_todo_lists(client, args.collection)
-    logger.debug("Fetched %d todo lists for summarisation", len(todo_lists))
-    if not todo_lists:
-        print("No todo lists found; nothing to summarise.")
-        return
+    summary: str | None = None
+    speech_path: Path | None
 
-    model = args.model or DEFAULT_MODELS[args.provider]
-    logger.debug("Using provider %s with model %s", args.provider, model)
-
-    if args.provider == "groq":
-        summary = summarise_with_groq(
-            todo_lists,
-            model=model,
-            temperature=args.temperature,
-            max_output_tokens=args.max_output_tokens,
-        )
+    if args.skip_summary:
+        speech_path = Path(args.existing_audio)
+        logger.debug("Skipping summary generation; using audio file %s", speech_path)
+        if not speech_path.exists():
+            print(
+                f"Existing audio file not found: {speech_path}",
+                file=sys.stderr,
+            )
+            return
     else:
-        summary = summarise_with_openrouter(
-            todo_lists,
-            model=model,
-            temperature=args.temperature,
-            max_output_tokens=args.max_output_tokens,
-        )
-    logger.debug("Generated summary with %d characters", len(summary))
-    print(summary)
+        config = FirebaseConfig.from_google_services(args.config)
+        client = build_client(config.project_id, args.credentials)
+        todo_lists = fetch_todo_lists(client, args.collection)
+        logger.debug("Fetched %d todo lists for summarisation", len(todo_lists))
+        if not todo_lists:
+            print("No todo lists found; nothing to summarise.")
+            return
 
-    if args.speech:
-        speech_path = synthesise_speech(summary)
-        if speech_path:
-            logger.debug("Speech synthesis successful: %s", speech_path)
-            print(f"\nSpeech saved to: {speech_path}")
+        model = args.model or DEFAULT_MODELS[args.provider]
+        logger.debug("Using provider %s with model %s", args.provider, model)
+
+        if args.provider == "groq":
+            summary = summarise_with_groq(
+                todo_lists,
+                model=model,
+                temperature=args.temperature,
+                max_output_tokens=args.max_output_tokens,
+            )
         else:
-            logger.debug("Speech synthesis skipped or failed")
-    else:
-        logger.debug("Speech synthesis disabled via CLI option")
-        speech_path = None
+            summary = summarise_with_openrouter(
+                todo_lists,
+                model=model,
+                temperature=args.temperature,
+                max_output_tokens=args.max_output_tokens,
+            )
+        logger.debug("Generated summary with %d characters", len(summary))
+        print(summary)
+
+        if args.speech:
+            speech_path = synthesise_speech(summary)
+            if speech_path:
+                logger.debug("Speech synthesis successful: %s", speech_path)
+                print(f"\nSpeech saved to: {speech_path}")
+            else:
+                logger.debug("Speech synthesis skipped or failed")
+        else:
+            logger.debug("Speech synthesis disabled via CLI option")
+            speech_path = None
 
     if args.telegram:
         if not speech_path:
