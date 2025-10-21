@@ -55,7 +55,8 @@ The project also exposes a processing pipeline that pushes the retrieved session
 todo lists to an LLM provider (OpenRouter by default) and prints the generated
 summary. When available, the summary is additionally synthesised into a speech
 track using [fal.ai](https://fal.ai) and saved to `todo-summary.wav` in the
-current directory:
+current directory. The generated audio can optionally be uploaded to a Telegram
+channel by providing bot credentials:
 
 ```bash
 uv run summarize-todos
@@ -67,7 +68,13 @@ Additional options mirror those of `list-todos`. You can select the provider wit
 `GROQ_API_KEY`. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
 variables allow identifying your integration in OpenRouter dashboards. To
 receive the audio summary you must also export a `FAL_KEY` with your fal.ai API
-token.
+token. To post the generated narration to Telegram as a voice message, enable the
+`--telegram` flag and supply bot credentials via the `--telegram-token` and
+`--telegram-chat-id` options or the `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
+environment variables. The chat ID can be the numeric identifier or the channel
+handle (e.g. `@my_channel`). Converting the generated WAV file to the Opus
+format used by Telegram voice messages requires an `ffmpeg` binary available in
+your `PATH`.
 
 The command prints a table for each todo list document and any nested subcollections
 (e.g. individual todo items) that belong to it.
