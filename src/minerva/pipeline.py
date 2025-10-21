@@ -27,7 +27,7 @@ DEFAULT_MODELS = {
 SYSTEM_PROMPT = (
     "You are a helpful assistant that generates concise summaries of todo lists. "
     "Highlight overdue or upcoming items and mention items lacking due dates when relevant. "
-    "Provide the answer in natural speech to be read out loud. Do not use characters or text structures that can't be read out loud. "
+    "Provide the summary as a podcast-like dialogue between two speakers Speaker 0: and Speaker 1: . Be playful and creative with moderation."
     "Answer in italian language"
 )
 
