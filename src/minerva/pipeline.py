@@ -88,6 +88,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--system-prompt-file",
+        default=None,
+        help="Path to a text file that overrides the default system prompt.",
+    )
+    parser.add_argument(
         "--log-level",
         default=None,
         help=(
@@ -176,6 +181,7 @@ def summarise_with_openrouter(
     model: str,
     temperature: float = 0.2,
     max_output_tokens: int | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> str:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
@@ -192,7 +198,7 @@ def summarise_with_openrouter(
         "model": model,
         "temperature": temperature,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
     }
@@ -232,6 +238,7 @@ def summarise_with_groq(
     model: str,
     temperature: float = 0.2,
     max_output_tokens: int | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> str:
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
@@ -245,7 +252,7 @@ def summarise_with_groq(
         max_output_tokens,
     )
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt},
     ]
 
@@ -270,6 +277,28 @@ def summarise_with_groq(
             logger.debug("Received Groq delta chunk with %d characters", len(delta))
 
     return "".join(parts).strip()
+
+def _load_system_prompt(path: str | None) -> str:
+    """Return the system prompt, optionally loaded from ``path``."""
+
+    if not path:
+        return SYSTEM_PROMPT
+
+    prompt_path = Path(path)
+    try:
+        contents = prompt_path.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - filesystem errors
+        raise RuntimeError(
+            f"Failed to read system prompt file {prompt_path}: {exc}"
+        ) from exc
+
+    stripped = contents.strip()
+    if not stripped:
+        raise RuntimeError(
+            f"System prompt file {prompt_path} is empty after stripping whitespace."
+        )
+
+    return stripped
 
 
 def _build_prompt(todo_lists: Iterable[TodoList]) -> str:
@@ -657,12 +686,20 @@ def main(argv: list[str] | None = None) -> None:
         model = args.model or DEFAULT_MODELS[args.provider]
         logger.debug("Using provider %s with model %s", args.provider, model)
 
+        try:
+            system_prompt = _load_system_prompt(args.system_prompt_file)
+        except RuntimeError as exc:
+            logger.error("Unable to load system prompt: %s", exc)
+            print(str(exc), file=sys.stderr)
+            return
+
         if args.provider == "groq":
             summary = summarise_with_groq(
                 todo_lists,
                 model=model,
                 temperature=args.temperature,
                 max_output_tokens=args.max_output_tokens,
+                system_prompt=system_prompt,
             )
         else:
             summary = summarise_with_openrouter(
@@ -670,6 +707,7 @@ def main(argv: list[str] | None = None) -> None:
                 model=model,
                 temperature=args.temperature,
                 max_output_tokens=args.max_output_tokens,
+                system_prompt=system_prompt,
             )
         summary_timestamp = datetime.now(timezone.utc)
         logger.debug("Generated summary with %d characters", len(summary))
