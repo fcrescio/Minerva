@@ -444,7 +444,7 @@ def post_summary_to_telegram(
 
     async def _send_voice_async() -> None:
         async with Bot(token=token) as bot:
-            voice_file = InputFile.from_path(voice_path)
+            voice_file = open(voice_path,"rb")
             await bot.send_voice(
                 chat_id=chat_id,
                 voice=voice_file,
