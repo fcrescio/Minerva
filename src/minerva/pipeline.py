@@ -273,7 +273,8 @@ def summarise_with_groq(
 
 
 def _build_prompt(todo_lists: Iterable[TodoList]) -> str:
-    lines = ["Provide a summary for the following todo lists:"]
+    today = datetime.now(timezone.utc).date().isoformat()
+    lines = [f"The current date and time is {today}","Provide a summary for the following todo lists:"]
     for todo_list in todo_lists:
         logger.debug("Adding todo list %s to prompt", todo_list.id)
         lines.append(f"\nList: {todo_list.display_title} (id={todo_list.id})")
