@@ -535,6 +535,7 @@ def main(argv: list[str] | None = None) -> None:
     configure_logging(args.log_level)
     logger.debug("CLI arguments: %s", args)
     summary: str | None = None
+    summary_timestamp: datetime | None = None
     speech_path: Path | None
     run_marker: str | None = None
     cache_path: Path | None = None
@@ -590,6 +591,7 @@ def main(argv: list[str] | None = None) -> None:
                 temperature=args.temperature,
                 max_output_tokens=args.max_output_tokens,
             )
+        summary_timestamp = datetime.now(timezone.utc)
         logger.debug("Generated summary with %d characters", len(summary))
         print(summary)
 
@@ -627,7 +629,11 @@ def main(argv: list[str] | None = None) -> None:
                     speech_path,
                     token=args.telegram_token,
                     chat_id=args.telegram_chat_id,
-                    caption=summary,
+                    caption=(
+                        summary_timestamp.isoformat()
+                        if summary_timestamp
+                        else datetime.now(timezone.utc).isoformat()
+                    ),
                 )
                 print("Telegram upload completed successfully.")
             except TelegramError as exc:
