@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -121,6 +123,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Skip LLM summarisation and reuse an existing audio file when "
             "uploading to Telegram."
+        ),
+    )
+    parser.add_argument(
+        "--run-cache-file",
+        default="summary_run_marker.txt",
+        help=(
+            "Path to the file where the pipeline stores the hash of the current "
+            "date and todo set."
+        ),
+    )
+    parser.add_argument(
+        "--skip-if-run",
+        dest="skip_if_run",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Skip summary generation when the run cache file already contains the "
+            "hash for today's todos. Disable with --no-skip-if-run."
         ),
     )
     parser.add_argument(
@@ -286,6 +306,28 @@ def _format_todo_for_prompt(todo: Todo) -> str:
         details,
     )
     return f"{headline} ({details})"
+
+
+def _compute_run_marker(todo_lists: Iterable[TodoList]) -> str:
+    """Return a hash that uniquely identifies today's todo set."""
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    document_ids = sorted({todo_list.id for todo_list in todo_lists})
+    todo_ids = sorted({todo.id for todo_list in todo_lists for todo in todo_list.todos})
+    payload = json.dumps(
+        {"date": today, "documents": document_ids, "todos": todo_ids},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _write_run_marker(marker: str, path: Path) -> None:
+    """Persist the run marker to ``path`` ensuring the directory exists."""
+
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{marker}\n", encoding="utf-8")
 
 
 def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav") -> Path | None:
@@ -494,6 +536,8 @@ def main(argv: list[str] | None = None) -> None:
     logger.debug("CLI arguments: %s", args)
     summary: str | None = None
     speech_path: Path | None
+    run_marker: str | None = None
+    cache_path: Path | None = None
 
     if args.skip_summary:
         speech_path = Path(args.existing_audio)
@@ -512,6 +556,22 @@ def main(argv: list[str] | None = None) -> None:
         if not todo_lists:
             print("No todo lists found; nothing to summarise.")
             return
+
+        if args.run_cache_file:
+            cache_path = Path(args.run_cache_file)
+            run_marker = _compute_run_marker(todo_lists)
+            logger.debug("Computed run marker %s", run_marker)
+            if args.skip_if_run and cache_path.exists():
+                existing_marker = cache_path.read_text(encoding="utf-8").strip()
+                logger.debug(
+                    "Existing run marker %s found in %s", existing_marker, cache_path
+                )
+                if existing_marker == run_marker:
+                    logger.info(
+                        "Run marker already present; skipping summary generation"
+                    )
+                    print("Summary already generated for today's todos; skipping.")
+                    return
 
         model = args.model or DEFAULT_MODELS[args.provider]
         logger.debug("Using provider %s with model %s", args.provider, model)
@@ -532,6 +592,10 @@ def main(argv: list[str] | None = None) -> None:
             )
         logger.debug("Generated summary with %d characters", len(summary))
         print(summary)
+
+        if cache_path and run_marker:
+            _write_run_marker(run_marker, cache_path)
+            logger.debug("Persisted run marker to %s", cache_path)
 
         if args.speech:
             speech_path = synthesise_speech(summary)
