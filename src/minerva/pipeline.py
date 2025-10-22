@@ -12,7 +12,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Mapping
 
 import httpx
 from groq import Groq
@@ -308,26 +308,78 @@ def _format_todo_for_prompt(todo: Todo) -> str:
     return f"{headline} ({details})"
 
 
-def _compute_run_marker(todo_lists: Iterable[TodoList]) -> str:
-    """Return a hash that uniquely identifies today's todo set."""
+def _compute_run_markers(todo_lists: Iterable[TodoList]) -> dict[str, str]:
+    """Return hashes that uniquely identify today's todos per session."""
 
     today = datetime.now(timezone.utc).date().isoformat()
-    document_ids = sorted({todo_list.id for todo_list in todo_lists})
-    todo_ids = sorted({todo.id for todo_list in todo_lists for todo in todo_list.todos})
-    payload = json.dumps(
-        {"date": today, "documents": document_ids, "todos": todo_ids},
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    markers: dict[str, str] = {}
+    for todo_list in todo_lists:
+        todos_payload = [_serialise_todo(todo) for todo in todo_list.todos]
+        payload = json.dumps(
+            {"date": today, "document": todo_list.id, "todos": todos_payload},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        markers[todo_list.id] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return markers
 
 
-def _write_run_marker(marker: str, path: Path) -> None:
-    """Persist the run marker to ``path`` ensuring the directory exists."""
+def _serialise_todo(todo: Todo) -> dict[str, object]:
+    """Return a JSON-serialisable representation of ``todo``."""
+
+    return {
+        "id": todo.id,
+        "title": todo.title,
+        "due_date": todo.due_date.isoformat(timespec="minutes") if todo.due_date else None,
+        "status": todo.status,
+        "metadata": {
+            key: _normalise_metadata_value(value)
+            for key, value in sorted(todo.metadata.items())
+        },
+    }
+
+
+def _normalise_metadata_value(value: object) -> object:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="minutes")
+    return str(value)
+
+
+def _write_run_markers(markers: Mapping[str, str], path: Path) -> None:
+    """Persist per-session run markers to ``path`` ensuring the directory exists."""
 
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{marker}\n", encoding="utf-8")
+    lines = [f"{session_id}\t{marker}" for session_id, marker in sorted(markers.items())]
+    contents = "\n".join(lines)
+    if lines:
+        contents += "\n"
+    path.write_text(contents, encoding="utf-8")
+
+
+def _read_run_markers(path: Path) -> dict[str, str]:
+    """Return previously stored per-session run markers.
+
+    Older single-marker files result in an empty mapping so that a fresh run
+    regenerates the cache using the new format.
+    """
+
+    markers: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "\t" in line:
+            session_id, marker = line.split("\t", 1)
+        elif " " in line:
+            session_id, marker = line.split(None, 1)
+        else:
+            logger.debug("Ignoring legacy run marker line without delimiter: %s", line)
+            return {}
+        markers[session_id] = marker.strip()
+    return markers
 
 
 def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav") -> Path | None:
@@ -536,7 +588,7 @@ def main(argv: list[str] | None = None) -> None:
     logger.debug("CLI arguments: %s", args)
     summary: str | None = None
     speech_path: Path | None
-    run_marker: str | None = None
+    run_markers: dict[str, str] | None = None
     cache_path: Path | None = None
 
     if args.skip_summary:
@@ -559,19 +611,46 @@ def main(argv: list[str] | None = None) -> None:
 
         if args.run_cache_file:
             cache_path = Path(args.run_cache_file)
-            run_marker = _compute_run_marker(todo_lists)
-            logger.debug("Computed run marker %s", run_marker)
+            run_markers = _compute_run_markers(todo_lists)
+            logger.debug(
+                "Computed run markers for %d session(s)",
+                len(run_markers),
+            )
             if args.skip_if_run and cache_path.exists():
-                existing_marker = cache_path.read_text(encoding="utf-8").strip()
+                existing_markers = _read_run_markers(cache_path)
                 logger.debug(
-                    "Existing run marker %s found in %s", existing_marker, cache_path
+                    "Loaded %d existing run marker(s) from %s",
+                    len(existing_markers),
+                    cache_path,
                 )
-                if existing_marker == run_marker:
+                unchanged_sessions = {
+                    session_id
+                    for session_id, marker in run_markers.items()
+                    if existing_markers.get(session_id) == marker
+                }
+                if unchanged_sessions:
                     logger.info(
-                        "Run marker already present; skipping summary generation"
+                        "Skipping %d unchanged session(s): %s",
+                        len(unchanged_sessions),
+                        ", ".join(sorted(unchanged_sessions)),
+                    )
+                todo_lists = [
+                    todo_list
+                    for todo_list in todo_lists
+                    if run_markers.get(todo_list.id)
+                    != existing_markers.get(todo_list.id)
+                ]
+                if not todo_lists:
+                    logger.info(
+                        "Run markers already present for all sessions; skipping summary generation"
                     )
                     print("Summary already generated for today's todos; skipping.")
                     return
+                if unchanged_sessions:
+                    print(
+                        "Skipping sessions with unchanged todos: "
+                        + ", ".join(sorted(unchanged_sessions))
+                    )
 
         model = args.model or DEFAULT_MODELS[args.provider]
         logger.debug("Using provider %s with model %s", args.provider, model)
@@ -593,9 +672,9 @@ def main(argv: list[str] | None = None) -> None:
         logger.debug("Generated summary with %d characters", len(summary))
         print(summary)
 
-        if cache_path and run_marker:
-            _write_run_marker(run_marker, cache_path)
-            logger.debug("Persisted run marker to %s", cache_path)
+        if cache_path and run_markers:
+            _write_run_markers(run_markers, cache_path)
+            logger.debug("Persisted run markers to %s", cache_path)
 
         if args.speech:
             speech_path = synthesise_speech(summary)
