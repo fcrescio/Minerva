@@ -67,7 +67,9 @@ Additional options mirror those of `list-todos`. You can select the provider wit
 `--model`. Depending on the provider you must set either `OPENROUTER_API_KEY` or
 `GROQ_API_KEY`. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
 variables allow identifying your integration in OpenRouter dashboards. To
-receive the audio summary you must also export a `FAL_KEY` with your fal.ai API
+replace the default LLM instructions, point `--system-prompt-file` to a text file
+whose contents should be used as the system prompt when generating the summary.
+To receive the audio summary you must also export a `FAL_KEY` with your fal.ai API
 token. To post the generated narration to Telegram as a voice message, enable the
 `--telegram` flag and supply bot credentials via the `--telegram-token` and
 `--telegram-chat-id` options or the `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
