@@ -1,0 +1,48 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          git fetch --tags
+          latest_tag=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            echo "::error::No existing tags found. Please create an initial tag before running this workflow."
+            exit 1
+          fi
+
+          IFS='.' read -r major minor patch <<<"$latest_tag"
+          if [ -z "$major" ] || [ -z "$minor" ] || [ -z "$patch" ]; then
+            echo "::error::Latest tag '$latest_tag' is not in the expected MAJOR.MINOR.PATCH format."
+            exit 1
+          fi
+
+          patch=$((patch + 1))
+          next_version="$major.$minor.$patch"
+
+          echo "current_version=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.next_version }}
+          release_name: Release ${{ steps.version.outputs.next_version }}
+          body: |
+            Automated release created from ${{ steps.version.outputs.current_version }}.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
