@@ -1,56 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Default to running once every 24 hours (86400 seconds) unless overridden.
-INTERVAL="${SCHEDULE_INTERVAL_SECONDS:-86400}"
+export MINERVA_DATA_DIR="${MINERVA_DATA_DIR:-/data}"
+export MINERVA_STATE_DIR="${MINERVA_STATE_DIR:-$MINERVA_DATA_DIR/state}"
+export MINERVA_PROMPTS_DIR="${MINERVA_PROMPTS_DIR:-$MINERVA_DATA_DIR/prompts}"
+export MINERVA_RUN_CACHE_FILE="${MINERVA_RUN_CACHE_FILE:-$MINERVA_STATE_DIR/summary_run_marker.txt}"
 
-ARGS=("$@")
+mkdir -p "$MINERVA_STATE_DIR" "$MINERVA_PROMPTS_DIR"
 
-CONFIG_FILE=""
-
-cleanup() {
-  if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
-    rm -f "$CONFIG_FILE"
-  fi
-}
-trap cleanup EXIT
-
-has_config_arg=0
-for arg in "${ARGS[@]}"; do
-  if [[ "$arg" == "--config" ]]; then
-    has_config_arg=1
-    break
+DEFAULT_PROMPTS_DIR="/usr/local/share/minerva/prompts"
+for prompt in hourly daily; do
+  target="$MINERVA_PROMPTS_DIR/${prompt}.txt"
+  if [[ ! -f "$target" ]]; then
+    cp "$DEFAULT_PROMPTS_DIR/${prompt}.txt" "$target"
   fi
 done
 
-if [[ "$has_config_arg" -eq 0 ]]; then
-  if [[ -n "${GOOGLE_SERVICES_JSON:-}" ]]; then
-    CONFIG_FILE="${GOOGLE_SERVICES_FILE:-$(mktemp)}"
-    printf '%s' "$GOOGLE_SERVICES_JSON" >"$CONFIG_FILE"
-    ARGS=("--config" "$CONFIG_FILE" "${ARGS[@]}")
-  elif [[ -n "${GOOGLE_SERVICES_JSON_BASE64:-}" ]]; then
-    CONFIG_FILE="${GOOGLE_SERVICES_FILE:-$(mktemp)}"
-    printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d >"$CONFIG_FILE"
-    ARGS=("--config" "$CONFIG_FILE" "${ARGS[@]}")
-  elif [[ -n "${GOOGLE_SERVICES_PATH:-}" ]]; then
-    if [[ -f "$GOOGLE_SERVICES_PATH" ]]; then
-      ARGS=("--config" "$GOOGLE_SERVICES_PATH" "${ARGS[@]}")
-    else
-      echo "[warning] GOOGLE_SERVICES_PATH '$GOOGLE_SERVICES_PATH' does not exist" >&2
-    fi
-  elif [[ -f /config/google-services.json ]]; then
-    ARGS=("--config" "/config/google-services.json" "${ARGS[@]}")
+CONFIG_TARGET="${MINERVA_CONFIG_FILE:-$MINERVA_DATA_DIR/google-services.json}"
+mkdir -p "$(dirname "$CONFIG_TARGET")"
+if [[ -n "${GOOGLE_SERVICES_JSON:-}" ]]; then
+  printf '%s' "$GOOGLE_SERVICES_JSON" >"$CONFIG_TARGET"
+  export MINERVA_CONFIG_PATH="$CONFIG_TARGET"
+elif [[ -n "${GOOGLE_SERVICES_JSON_BASE64:-}" ]]; then
+  printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d >"$CONFIG_TARGET"
+  export MINERVA_CONFIG_PATH="$CONFIG_TARGET"
+elif [[ -n "${GOOGLE_SERVICES_PATH:-}" ]]; then
+  if [[ -f "$GOOGLE_SERVICES_PATH" ]]; then
+    export MINERVA_CONFIG_PATH="$GOOGLE_SERVICES_PATH"
+  else
+    echo "[warning] GOOGLE_SERVICES_PATH '$GOOGLE_SERVICES_PATH' does not exist" >&2
   fi
+elif [[ -f /config/google-services.json ]]; then
+  export MINERVA_CONFIG_PATH="/config/google-services.json"
 fi
 
-run_service() {
-  echo "[$(date --iso-8601=seconds)] Starting todo summary run" >&2
-  summarize-todos "${ARGS[@]}"
-  echo "[$(date --iso-8601=seconds)] Completed todo summary run" >&2
-}
+CRON_FILE="${MINERVA_CRON_FILE:-/etc/minerva.cron}"
+cat >"$CRON_FILE" <<'CRONTAB'
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+SHELL=/bin/bash
 
-# Run immediately on container start, then sleep for the configured interval.
-while true; do
-  run_service
-  sleep "$INTERVAL"
-done
+0 * * * * /usr/local/bin/minerva-run hourly
+0 6 * * * /usr/local/bin/minerva-run daily
+CRONTAB
+
+if [[ $# -gt 0 ]]; then
+  exec "$@"
+fi
+
+exec /usr/local/bin/supercronic "$CRON_FILE"
