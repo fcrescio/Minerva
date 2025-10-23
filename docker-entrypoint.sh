@@ -34,17 +34,29 @@ elif [[ -f /config/google-services.json ]]; then
   export MINERVA_CONFIG_PATH="/config/google-services.json"
 fi
 
-CRON_FILE="${MINERVA_CRON_FILE:-/etc/minerva.cron}"
-cat >"$CRON_FILE" <<'CRONTAB'
+CRON_FILE="${MINERVA_CRON_FILE:-/etc/cron.d/minerva}"
+if [[ "$CRON_FILE" == /etc/cron.d/* ]]; then
+  cat >"$CRON_FILE" <<'CRONTAB'
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+SHELL=/bin/bash
+
+0 * * * * root /usr/local/bin/minerva-run hourly
+0 6 * * * root /usr/local/bin/minerva-run daily
+CRONTAB
+  chmod 0644 "$CRON_FILE"
+else
+  cat >"$CRON_FILE" <<'CRONTAB'
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 SHELL=/bin/bash
 
 0 * * * * /usr/local/bin/minerva-run hourly
 0 6 * * * /usr/local/bin/minerva-run daily
 CRONTAB
+  crontab "$CRON_FILE"
+fi
 
 if [[ $# -gt 0 ]]; then
   exec "$@"
 fi
 
-exec /usr/local/bin/supercronic "$CRON_FILE"
+exec cron -f
