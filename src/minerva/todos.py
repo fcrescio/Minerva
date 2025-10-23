@@ -32,8 +32,14 @@ class TodoList:
     todos: list[Todo]
 
 
-def fetch_todo_lists(client: Client, collection: str) -> list[TodoList]:
-    """Retrieve all todo lists from ``collection`` sorted by their natural order."""
+def fetch_todo_lists(
+    client: Client, collection: str, *, summary_group: str | None = None
+) -> list[TodoList]:
+    """Retrieve todo lists from ``collection`` sorted by their natural order.
+
+    When ``summary_group`` is provided, only include documents whose
+    ``summaryGroup`` field matches the requested value.
+    """
 
     logger.debug("Fetching todo lists from collection '%s'", collection)
     documents = list(client.collection(collection).stream())
@@ -41,7 +47,18 @@ def fetch_todo_lists(client: Client, collection: str) -> list[TodoList]:
     todo_lists: list[TodoList] = []
     for document in documents:
         logger.debug("Processing document %s", document.id)
-        todo_lists.append(_build_todo_list(document))
+        todo_list = _build_todo_list(document)
+        if summary_group is not None:
+            group_value = todo_list.data.get("summaryGroup")
+            if group_value != summary_group:
+                logger.debug(
+                    "Skipping document %s because summaryGroup %r does not match %r",
+                    document.id,
+                    group_value,
+                    summary_group,
+                )
+                continue
+        todo_lists.append(todo_list)
     return todo_lists
 
 
