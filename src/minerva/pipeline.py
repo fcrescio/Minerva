@@ -54,6 +54,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Name of the Firestore collection that stores the sessions.",
     )
     parser.add_argument(
+        "--summary-group",
+        default=None,
+        help="Only summarise sessions whose summaryGroup field matches this value.",
+    )
+    parser.add_argument(
         "--credentials",
         default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
         help=(
@@ -634,10 +639,20 @@ def main(argv: list[str] | None = None) -> None:
     else:
         config = FirebaseConfig.from_google_services(args.config)
         client = build_client(config.project_id, args.credentials)
-        todo_lists = fetch_todo_lists(client, args.collection)
+        todo_lists = fetch_todo_lists(
+            client,
+            args.collection,
+            summary_group=args.summary_group,
+        )
         logger.debug("Fetched %d todo lists for summarisation", len(todo_lists))
         if not todo_lists:
-            print("No todo lists found; nothing to summarise.")
+            if args.summary_group:
+                print(
+                    "No todo lists found for summary group "
+                    f"'{args.summary_group}'; nothing to summarise."
+                )
+            else:
+                print("No todo lists found; nothing to summarise.")
             return
 
         if args.run_cache_file:
