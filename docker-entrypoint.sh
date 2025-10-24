@@ -50,6 +50,13 @@ else
   log "No google-services.json configuration provided"
 fi
 
+# Dump env as export statements, safely escaping double quotes
+printenv | awk -F= '{
+  k=$1; v=substr($0, index($0,$2));
+  gsub(/"/, "\\\"", v);
+  printf("export %s=\"%s\"\n", k, v);
+}' > /etc/container.env
+
 CRON_FILE="${MINERVA_CRON_FILE:-/etc/cron.d/minerva}"
 if [[ "$CRON_FILE" == /etc/cron.d/* ]]; then
   log "Writing system cron file to $CRON_FILE"
