@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source /etc/container.env
+
 if [[ -n "${MINERVA_LOG_PATH:-}" ]]; then
   exec >>"$MINERVA_LOG_PATH" 2>&1
 elif [[ -e /proc/1/fd/1 && -w /proc/1/fd/1 ]]; then
