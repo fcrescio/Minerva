@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -n "${MINERVA_LOG_PATH:-}" ]]; then
+  exec >>"$MINERVA_LOG_PATH" 2>&1
+elif [[ -e /proc/1/fd/1 && -w /proc/1/fd/1 ]]; then
+  exec >>/proc/1/fd/1 2>&1
+else
+  exec >>/dev/stdout 2>&1
+fi
+
+log() {
+  printf '[%s] [minerva-run] %s\n' "$(date --iso-8601=seconds)" "$*"
+}
+
 MODE="${1:-}"
 if [[ -z "$MODE" ]]; then
-  echo "Usage: minerva-run <hourly|daily>" >&2
+  log "Usage: minerva-run <hourly|daily>"
   exit 2
 fi
 shift || true
@@ -33,7 +45,7 @@ case "$MODE" in
   hourly)
     PROMPT_FILE="$PROMPTS_DIR/hourly.txt"
     if [[ ! -f "$PROMPT_FILE" ]]; then
-      echo "Hourly system prompt not found at $PROMPT_FILE" >&2
+      log "Hourly system prompt not found at $PROMPT_FILE"
       exit 1
     fi
     ARGS+=("--system-prompt-file" "$PROMPT_FILE" "--run-cache-file" "$RUN_CACHE_FILE" "--skip-if-run")
@@ -45,7 +57,7 @@ case "$MODE" in
   daily)
     PROMPT_FILE="$PROMPTS_DIR/daily.txt"
     if [[ ! -f "$PROMPT_FILE" ]]; then
-      echo "Daily system prompt not found at $PROMPT_FILE" >&2
+      log "Daily system prompt not found at $PROMPT_FILE"
       exit 1
     fi
     ARGS+=("--system-prompt-file" "$PROMPT_FILE" "--run-cache-file" "$RUN_CACHE_FILE" "--no-skip-if-run")
@@ -55,7 +67,7 @@ case "$MODE" in
     fi
     ;;
   *)
-    echo "Unknown run mode: $MODE" >&2
+    log "Unknown run mode: $MODE"
     exit 2
     ;;
 esac
@@ -69,6 +81,6 @@ if [[ $# -gt 0 ]]; then
   ARGS+=("$@")
 fi
 
-printf '[%s] Starting %s summary run\n' "$(date --iso-8601=seconds)" "$MODE" >&2
+log "Starting $MODE summary run"
 summarize-todos "${ARGS[@]}"
-printf '[%s] Completed %s summary run\n' "$(date --iso-8601=seconds)" "$MODE" >&2
+log "Completed $MODE summary run"
