@@ -87,5 +87,12 @@ if [[ $# -gt 0 ]]; then
   exec "$@"
 fi
 
+# Dump env as export statements, safely escaping double quotes
+printenv | awk -F= '{
+  k=$1; v=substr($0, index($0,$2));
+  gsub(/"/, "\\\"", v);
+  printf("export %s=\"%s\"\n", k, v);
+}' > /etc/container.env
+
 log "Starting cron in foreground"
 exec cron -f
