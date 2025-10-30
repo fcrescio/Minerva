@@ -49,34 +49,52 @@ Todo items are displayed in chronological order, with the closest `dueDate` firs
 and undated entries listed last. Each todo retains its associated metadata for
 easy inspection.
 
-## Summarise todos with an LLM
+## Summarise and publish todos with atomic commands
 
-The project also exposes a processing pipeline that pushes the retrieved session
-todo lists to an LLM provider (OpenRouter by default) and prints the generated
-summary. When available, the summary is additionally synthesised into a speech
-track using [fal.ai](https://fal.ai) and saved to `todo-summary.wav` in the
-current directory. The generated audio can optionally be uploaded to a Telegram
-channel by providing bot credentials:
+The summarisation workflow is split across three standalone commands so that
+each step can be automated independently or combined in custom pipelines. The
+output of one command acts as the input for the next:
 
-```bash
-uv run summarize-todos
-```
+1. **Fetch todos from Firestore** – Export the selected session documents to a
+   JSON file while tracking change markers for each session.
 
-Additional options mirror those of `list-todos`. You can select the provider with
-`--provider` (`openrouter` or `groq`) and override the target model with
-`--model`. Depending on the provider you must set either `OPENROUTER_API_KEY` or
-`GROQ_API_KEY`. Optional `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE`
-variables allow identifying your integration in OpenRouter dashboards. To
-replace the default LLM instructions, point `--system-prompt-file` to a text file
-whose contents should be used as the system prompt when generating the summary.
-To receive the audio summary you must also export a `FAL_KEY` with your fal.ai API
-token. To post the generated narration to Telegram as a voice message, enable the
-`--telegram` flag and supply bot credentials via the `--telegram-token` and
-`--telegram-chat-id` options or the `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
-environment variables. The chat ID can be the numeric identifier or the channel
-handle (e.g. `@my_channel`). Converting the generated WAV file to the Opus
-format used by Telegram voice messages requires an `ffmpeg` binary available in
-your `PATH`.
+   ```bash
+   uv run fetch-todos --output todo_dump.json
+   ```
 
-The command prints a table for each todo list document and any nested subcollections
-(e.g. individual todo items) that belong to it.
+   * Filter sessions with `--summary-group`.
+   * Skip regeneration when the todos have not changed by pointing
+     `--run-cache-file` to a marker file and enabling `--skip-if-run`.
+
+2. **Generate a natural language summary** – Feed the exported JSON dump to an
+   LLM provider (OpenRouter by default) and store the generated narration text.
+
+   ```bash
+   uv run summarize-todos --todos todo_dump.json --output todo_summary.txt
+   ```
+
+   * Choose the provider with `--provider` (`openrouter` or `groq`) and override
+     the model via `--model`.
+   * Set the appropriate API key (`OPENROUTER_API_KEY` or `GROQ_API_KEY`).
+   * Supply custom instructions with `--system-prompt-file`.
+   * Run markers stored in the JSON dump are written back to the cache file so
+     subsequent fetches can detect unchanged data.
+
+3. **Publish the narration** – Convert the summary to speech using
+   [fal.ai](https://fal.ai) and optionally post the audio to Telegram as a voice
+   message.
+
+   ```bash
+   uv run publish-summary --summary todo_summary.txt --speech-output todo-summary.wav
+   ```
+
+   * Provide a `FAL_KEY` environment variable to enable speech synthesis, or
+     pass an existing audio file with `--existing-audio`.
+   * Upload the narration to Telegram with `--telegram` (enabled by default) and
+     the `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` environment variables or the
+     matching CLI flags. The chat ID can be numeric or a channel handle (e.g.
+     `@my_channel`). Converting audio for Telegram voice messages requires an
+     `ffmpeg` binary available on your `PATH`.
+
+Each command prints human-friendly progress information and can be composed with
+other tooling or scheduled jobs to tailor the automation to your needs.
