@@ -16,7 +16,9 @@ dependencies = [
 
 [project.scripts]
 list-todos = "minerva.main:main"
-summarize-todos = "minerva.pipeline:main"
+fetch-todos = "minerva.tools.fetch:main"
+summarize-todos = "minerva.tools.summarise:main"
+publish-summary = "minerva.tools.publish:main"
 
 [tool.uv]
 package = true
