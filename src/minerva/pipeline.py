@@ -1,28 +1,22 @@
 """Processing pipeline that summarises todos using an LLM provider."""
 from __future__ import annotations
 
-import argparse
 import asyncio
 import hashlib
 import json
 import logging
-import os
 import shutil
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping
 
 import httpx
 from groq import Groq
-from telegram import Bot, InputFile
+from telegram import Bot
 from telegram.error import TelegramError
 
-from .config import FirebaseConfig
-from .logging_utils import configure_logging
-from .main import build_client
-from .todos import Todo, TodoList, fetch_todo_lists
+from .todos import Todo, TodoList
 
 logger = logging.getLogger(__name__)
 
@@ -39,147 +33,6 @@ SYSTEM_PROMPT = (
 )
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Summarise todos with an LLM via OpenRouter or Groq."
-    )
-    parser.add_argument(
-        "--config",
-        default="google-services.json",
-        help="Path to the google-services.json file shipped with Diana.",
-    )
-    parser.add_argument(
-        "--collection",
-        default="sessions",
-        help="Name of the Firestore collection that stores the sessions.",
-    )
-    parser.add_argument(
-        "--summary-group",
-        default=None,
-        help="Only summarise sessions whose summaryGroup field matches this value.",
-    )
-    parser.add_argument(
-        "--credentials",
-        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help=(
-            "Optional path to a Google Cloud service account JSON file. "
-            "Defaults to the GOOGLE_APPLICATION_CREDENTIALS environment variable."
-        ),
-    )
-    parser.add_argument(
-        "--provider",
-        choices=sorted(DEFAULT_MODELS),
-        default="openrouter",
-        help="LLM provider to use for summarisation.",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Model identifier to use for summarisation. Defaults depend on the provider.",
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=0.2,
-        help="Sampling temperature supplied to the chat completion request.",
-    )
-    parser.add_argument(
-        "--max-output-tokens",
-        type=int,
-        default=1024,
-        help=(
-            "Maximum number of tokens the model is allowed to generate. "
-            "OpenRouter requires this for some providers such as Anthropic."
-        ),
-    )
-    parser.add_argument(
-        "--system-prompt-file",
-        default=None,
-        help="Path to a text file that overrides the default system prompt.",
-    )
-    parser.add_argument(
-        "--log-level",
-        default=None,
-        help=(
-            "Logging level (e.g. DEBUG, INFO). Defaults to the MINERVA_LOG_LEVEL "
-            "environment variable or INFO when unset."
-        ),
-    )
-    parser.add_argument(
-        "--speech",
-        dest="speech",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "Generate an audio narration of the summary using fal.ai. "
-            "Disable with --no-speech."
-        ),
-    )
-    parser.add_argument(
-        "--telegram",
-        dest="telegram",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "Post the generated speech track to Telegram. Requires a bot token "
-            "and target chat ID. Disable with --no-telegram."
-        ),
-    )
-    parser.add_argument(
-        "--skip-summary",
-        dest="skip_summary",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "Skip LLM summarisation and reuse an existing audio file when "
-            "uploading to Telegram."
-        ),
-    )
-    parser.add_argument(
-        "--run-cache-file",
-        default="summary_run_marker.txt",
-        help=(
-            "Path to the file where the pipeline stores the hash of the current "
-            "date and todo set."
-        ),
-    )
-    parser.add_argument(
-        "--skip-if-run",
-        dest="skip_if_run",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "Skip summary generation when the run cache file already contains the "
-            "hash for today's todos. Disable with --no-skip-if-run."
-        ),
-    )
-    parser.add_argument(
-        "--existing-audio",
-        default="todo_summary.ogg",
-        help=(
-            "Path to an existing audio file to upload when --skip-summary is "
-            "enabled."
-        ),
-    )
-    parser.add_argument(
-        "--telegram-token",
-        default=os.environ.get("TELEGRAM_BOT_TOKEN"),
-        help=(
-            "Telegram bot token. Defaults to the TELEGRAM_BOT_TOKEN environment "
-            "variable."
-        ),
-    )
-    parser.add_argument(
-        "--telegram-chat-id",
-        default=os.environ.get("TELEGRAM_CHAT_ID"),
-        help=(
-            "Telegram chat or channel ID where the audio should be posted. "
-            "Defaults to the TELEGRAM_CHAT_ID environment variable."
-        ),
-    )
-    return parser.parse_args(argv)
-
-
 def summarise_with_openrouter(
     todos: Iterable[TodoList],
     *,
@@ -192,7 +45,7 @@ def summarise_with_openrouter(
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY environment variable is not set.")
 
-    prompt = _build_prompt(todos)
+    prompt = build_prompt(todos)
     logger.debug(
         "Submitting OpenRouter request with model=%s temperature=%s max_output_tokens=%s",
         model,
@@ -249,7 +102,7 @@ def summarise_with_groq(
     if not api_key:
         raise RuntimeError("GROQ_API_KEY environment variable is not set.")
 
-    prompt = _build_prompt(todos)
+    prompt = build_prompt(todos)
     logger.debug(
         "Submitting Groq request with model=%s temperature=%s max_output_tokens=%s",
         model,
@@ -283,7 +136,7 @@ def summarise_with_groq(
 
     return "".join(parts).strip()
 
-def _load_system_prompt(path: str | None) -> str:
+def load_system_prompt(path: str | None) -> str:
     """Return the system prompt, optionally loaded from ``path``."""
 
     if not path:
@@ -306,7 +159,7 @@ def _load_system_prompt(path: str | None) -> str:
     return stripped
 
 
-def _build_prompt(todo_lists: Iterable[TodoList]) -> str:
+def build_prompt(todo_lists: Iterable[TodoList]) -> str:
     today = datetime.now(timezone.utc).date().isoformat()
     lines = [f"The current date and time is {today}","Provide a summary for the following todo lists:"]
     for todo_list in todo_lists:
@@ -317,11 +170,11 @@ def _build_prompt(todo_lists: Iterable[TodoList]) -> str:
             lines.append("  - No todos recorded.")
             continue
         for todo in todo_list.todos:
-            lines.append(_format_todo_for_prompt(todo))
+            lines.append(format_todo_for_prompt(todo))
     return "\n".join(lines)
 
 
-def _format_todo_for_prompt(todo: Todo) -> str:
+def format_todo_for_prompt(todo: Todo) -> str:
     headline = f"  - {todo.title}"
     parts: list[str] = []
     if todo.due_date:
@@ -343,13 +196,13 @@ def _format_todo_for_prompt(todo: Todo) -> str:
     return f"{headline} ({details})"
 
 
-def _compute_run_markers(todo_lists: Iterable[TodoList]) -> dict[str, str]:
+def compute_run_markers(todo_lists: Iterable[TodoList]) -> dict[str, str]:
     """Return hashes that uniquely identify today's todos per session."""
 
     today = datetime.now(timezone.utc).date().isoformat()
     markers: dict[str, str] = {}
     for todo_list in todo_lists:
-        todos_payload = [_serialise_todo(todo) for todo in todo_list.todos]
+        todos_payload = [serialise_todo(todo) for todo in todo_list.todos]
         payload = json.dumps(
             {"date": today, "document": todo_list.id, "todos": todos_payload},
             separators=(",", ":"),
@@ -359,7 +212,7 @@ def _compute_run_markers(todo_lists: Iterable[TodoList]) -> dict[str, str]:
     return markers
 
 
-def _serialise_todo(todo: Todo) -> dict[str, object]:
+def serialise_todo(todo: Todo) -> dict[str, object]:
     """Return a JSON-serialisable representation of ``todo``."""
 
     return {
@@ -368,13 +221,69 @@ def _serialise_todo(todo: Todo) -> dict[str, object]:
         "due_date": todo.due_date.isoformat(timespec="minutes") if todo.due_date else None,
         "status": todo.status,
         "metadata": {
-            key: _normalise_metadata_value(value)
+            key: normalise_metadata_value(value)
             for key, value in sorted(todo.metadata.items())
         },
     }
 
 
-def _normalise_metadata_value(value: object) -> object:
+def serialise_todo_list(todo_list: TodoList) -> dict[str, object]:
+    """Return a serialisable mapping representing ``todo_list``."""
+
+    return {
+        "id": todo_list.id,
+        "display_title": todo_list.display_title,
+        "todos": [serialise_todo(todo) for todo in todo_list.todos],
+    }
+
+
+def deserialise_todo(payload: Mapping[str, object]) -> Todo:
+    """Reconstruct a :class:`Todo` instance from ``payload``."""
+
+    raw_due_date = payload.get("due_date")
+    due_date: datetime | None
+    if isinstance(raw_due_date, str) and raw_due_date:
+        try:
+            parsed = datetime.fromisoformat(raw_due_date)
+        except ValueError:
+            logger.debug("Unable to parse todo due date %r", raw_due_date)
+            due_date = None
+        else:
+            due_date = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    else:
+        due_date = None
+
+    metadata = payload.get("metadata")
+    metadata_mapping = dict(metadata) if isinstance(metadata, Mapping) else {}
+
+    return Todo(
+        id=str(payload.get("id", "")),
+        title=str(payload.get("title", "")),
+        due_date=due_date,
+        status=str(payload.get("status", "")),
+        metadata={str(key): value for key, value in metadata_mapping.items()},
+    )
+
+
+def deserialise_todo_list(payload: Mapping[str, object]) -> TodoList:
+    """Reconstruct a :class:`TodoList` instance from ``payload``."""
+
+    todos_payload = payload.get("todos")
+    todos: list[Todo] = []
+    if isinstance(todos_payload, Iterable):
+        for item in todos_payload:
+            if isinstance(item, Mapping):
+                todos.append(deserialise_todo(item))
+
+    return TodoList(
+        id=str(payload.get("id", "")),
+        display_title=str(payload.get("display_title", "")),
+        data=dict(payload.get("data", {})) if isinstance(payload.get("data"), Mapping) else {},
+        todos=todos,
+    )
+
+
+def normalise_metadata_value(value: object) -> object:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if isinstance(value, datetime):
@@ -382,7 +291,7 @@ def _normalise_metadata_value(value: object) -> object:
     return str(value)
 
 
-def _write_run_markers(markers: Mapping[str, str], path: Path) -> None:
+def write_run_markers(markers: Mapping[str, str], path: Path) -> None:
     """Persist per-session run markers to ``path`` ensuring the directory exists."""
 
     if not path.parent.exists():
@@ -394,7 +303,7 @@ def _write_run_markers(markers: Mapping[str, str], path: Path) -> None:
     path.write_text(contents, encoding="utf-8")
 
 
-def _read_run_markers(path: Path) -> dict[str, str]:
+def read_run_markers(path: Path) -> dict[str, str]:
     """Return previously stored per-session run markers.
 
     Older single-marker files result in an empty mapping so that a fresh run
@@ -481,7 +390,7 @@ def synthesise_speech(summary: str, *, output_filename: str = "todo-summary.wav"
         print(f"Failed to synthesise speech with fal.ai: {exc}", file=sys.stderr)
         return None
 
-    audio_urls = list(_extract_audio_urls(result))
+    audio_urls = list(extract_audio_urls(result))
     logger.debug("Extracted %d audio URL(s) from fal.ai response", len(audio_urls))
     if not audio_urls:
         logger.debug("fal.ai response payload contained no audio URLs: %r", result)
@@ -573,12 +482,12 @@ def post_summary_to_telegram(
 
     async def _send_voice_async() -> None:
         async with Bot(token=token) as bot:
-            voice_file = open(voice_path,"rb")
-            await bot.send_voice(
-                chat_id=chat_id,
-                voice=voice_file,
-                caption=caption_text,
-            )
+            with open(voice_path, "rb") as voice_file:
+                await bot.send_voice(
+                    chat_id=chat_id,
+                    voice=voice_file,
+                    caption=caption_text,
+                )
 
     try:
         asyncio.run(_send_voice_async())
@@ -588,21 +497,21 @@ def post_summary_to_telegram(
         raise
 
 
-def _extract_audio_urls(payload: object) -> Iterator[str]:
+def extract_audio_urls(payload: object) -> Iterator[str]:
     """Yield audio URLs from the fal.ai response payload."""
 
     if isinstance(payload, dict):
         logger.debug("Inspecting dict payload keys: %s", list(payload))
         for key in ("audio", "url"):
             if key in payload:
-                yield from _extract_audio_urls(payload[key])
+                yield from extract_audio_urls(payload[key])
         for value in payload.values():
             if isinstance(value, (dict, list)):
-                yield from _extract_audio_urls(value)
+                yield from extract_audio_urls(value)
     elif isinstance(payload, list):
         logger.debug("Inspecting list payload with %d elements", len(payload))
         for item in payload:
-            yield from _extract_audio_urls(item)
+            yield from extract_audio_urls(item)
     elif isinstance(payload, str):
         if payload.startswith("http"):
             logger.debug("Found audio URL candidate: %s", payload)
@@ -612,166 +521,31 @@ def _extract_audio_urls(payload: object) -> Iterator[str]:
     elif isinstance(payload, tuple):  # pragma: no cover - defensive branch
         logger.debug("Inspecting tuple payload with %d elements", len(payload))
         for item in payload:
-            yield from _extract_audio_urls(item)
+            yield from extract_audio_urls(item)
     else:
         logger.debug("Ignoring payload of type %s", type(payload))
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
-    configure_logging(args.log_level)
-    logger.debug("CLI arguments: %s", args)
-    summary: str | None = None
-    summary_timestamp: datetime | None = None
-    speech_path: Path | None
-    run_markers: dict[str, str] | None = None
-    cache_path: Path | None = None
-
-    if args.skip_summary:
-        speech_path = Path(args.existing_audio)
-        logger.debug("Skipping summary generation; using audio file %s", speech_path)
-        if not speech_path.exists():
-            print(
-                f"Existing audio file not found: {speech_path}",
-                file=sys.stderr,
-            )
-            return
-    else:
-        config = FirebaseConfig.from_google_services(args.config)
-        client = build_client(config.project_id, args.credentials)
-        todo_lists = fetch_todo_lists(
-            client,
-            args.collection,
-            summary_group=args.summary_group,
-        )
-        logger.debug("Fetched %d todo lists for summarisation", len(todo_lists))
-        if not todo_lists:
-            if args.summary_group:
-                print(
-                    "No todo lists found for summary group "
-                    f"'{args.summary_group}'; nothing to summarise."
-                )
-            else:
-                print("No todo lists found; nothing to summarise.")
-            return
-
-        if args.run_cache_file:
-            cache_path = Path(args.run_cache_file)
-            run_markers = _compute_run_markers(todo_lists)
-            logger.debug(
-                "Computed run markers for %d session(s)",
-                len(run_markers),
-            )
-            if args.skip_if_run and cache_path.exists():
-                existing_markers = _read_run_markers(cache_path)
-                logger.debug(
-                    "Loaded %d existing run marker(s) from %s",
-                    len(existing_markers),
-                    cache_path,
-                )
-                unchanged_sessions = {
-                    session_id
-                    for session_id, marker in run_markers.items()
-                    if existing_markers.get(session_id) == marker
-                }
-                if unchanged_sessions:
-                    logger.info(
-                        "Skipping %d unchanged session(s): %s",
-                        len(unchanged_sessions),
-                        ", ".join(sorted(unchanged_sessions)),
-                    )
-                todo_lists = [
-                    todo_list
-                    for todo_list in todo_lists
-                    if run_markers.get(todo_list.id)
-                    != existing_markers.get(todo_list.id)
-                ]
-                if not todo_lists:
-                    logger.info(
-                        "Run markers already present for all sessions; skipping summary generation"
-                    )
-                    print("Summary already generated for today's todos; skipping.")
-                    return
-                if unchanged_sessions:
-                    print(
-                        "Skipping sessions with unchanged todos: "
-                        + ", ".join(sorted(unchanged_sessions))
-                    )
-
-        model = args.model or DEFAULT_MODELS[args.provider]
-        logger.debug("Using provider %s with model %s", args.provider, model)
-
-        try:
-            system_prompt = _load_system_prompt(args.system_prompt_file)
-        except RuntimeError as exc:
-            logger.error("Unable to load system prompt: %s", exc)
-            print(str(exc), file=sys.stderr)
-            return
-
-        if args.provider == "groq":
-            summary = summarise_with_groq(
-                todo_lists,
-                model=model,
-                temperature=args.temperature,
-                max_output_tokens=args.max_output_tokens,
-                system_prompt=system_prompt,
-            )
-        else:
-            summary = summarise_with_openrouter(
-                todo_lists,
-                model=model,
-                temperature=args.temperature,
-                max_output_tokens=args.max_output_tokens,
-                system_prompt=system_prompt,
-            )
-        summary_timestamp = datetime.now(timezone.utc)
-        logger.debug("Generated summary with %d characters", len(summary))
-        print(summary)
-
-        if cache_path and run_markers:
-            _write_run_markers(run_markers, cache_path)
-            logger.debug("Persisted run markers to %s", cache_path)
-
-        if args.speech:
-            speech_path = synthesise_speech(summary)
-            if speech_path:
-                logger.debug("Speech synthesis successful: %s", speech_path)
-                print(f"\nSpeech saved to: {speech_path}")
-            else:
-                logger.debug("Speech synthesis skipped or failed")
-        else:
-            logger.debug("Speech synthesis disabled via CLI option")
-            speech_path = None
-
-    if args.telegram:
-        if not speech_path:
-            logger.debug("Telegram upload requested but no speech file is available")
-            print(
-                "Telegram upload requested but no speech file was generated.",
-                file=sys.stderr,
-            )
-        elif not args.telegram_token or not args.telegram_chat_id:
-            logger.debug("Telegram credentials are missing; skipping upload")
-            print(
-                "Telegram bot token or chat ID missing; skipping Telegram upload.",
-                file=sys.stderr,
-            )
-        else:
-            try:
-                post_summary_to_telegram(
-                    speech_path,
-                    token=args.telegram_token,
-                    chat_id=args.telegram_chat_id,
-                    caption=(
-                        summary_timestamp.isoformat()
-                        if summary_timestamp
-                        else datetime.now(timezone.utc).isoformat()
-                    ),
-                )
-                print("Telegram upload completed successfully.")
-            except TelegramError as exc:
-                print(f"Failed to upload summary to Telegram: {exc}", file=sys.stderr)
+__all__ = [
+    "DEFAULT_MODELS",
+    "SYSTEM_PROMPT",
+    "build_prompt",
+    "compute_run_markers",
+    "convert_audio_to_ogg_opus",
+    "deserialise_todo",
+    "deserialise_todo_list",
+    "extract_audio_urls",
+    "format_todo_for_prompt",
+    "load_system_prompt",
+    "normalise_metadata_value",
+    "post_summary_to_telegram",
+    "read_run_markers",
+    "serialise_todo",
+    "serialise_todo_list",
+    "summarise_with_groq",
+    "summarise_with_openrouter",
+    "synthesise_speech",
+    "write_run_markers",
+]
 
 
-if __name__ == "__main__":  # pragma: no cover - manual execution
-    main()
