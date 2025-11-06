@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# User-configurable environment variables
+# ---------------------------------------
+#   MINERVA_LOG_PATH              File to tee script output to.
+#   MINERVA_DATA_DIR              Root data directory (defaults to /data).
+#   MINERVA_STATE_DIR             Directory to store generated state.
+#   MINERVA_PROMPTS_DIR           Directory containing prompt templates.
+#   MINERVA_CONFIG_PATH           Explicit path to google-services.json.
+#   MINERVA_FETCH_ARGS            Extra arguments for every fetch invocation.
+#   MINERVA_SUMMARY_ARGS          Extra arguments for every summary invocation.
+#   MINERVA_PUBLISH_ARGS          Extra arguments for every publish invocation.
+#   MINERVA_SHARED_ARGS           Extra arguments appended to summary invocations.
+#   MINERVA_HOURLY_FETCH_ARGS     Extra fetch arguments for hourly runs.
+#   MINERVA_HOURLY_SUMMARY_ARGS   Extra summary arguments for hourly runs.
+#   MINERVA_HOURLY_PUBLISH_ARGS   Extra publish arguments for hourly runs.
+#   MINERVA_DAILY_FETCH_ARGS      Extra fetch arguments for daily runs.
+#   MINERVA_DAILY_SUMMARY_ARGS    Extra summary arguments for daily runs.
+#   MINERVA_DAILY_PUBLISH_ARGS    Extra publish arguments for daily runs.
+
 source /etc/container.env
 
 if [[ -n "${MINERVA_LOG_PATH:-}" ]]; then
@@ -45,6 +63,17 @@ fi
 PROMPT_FILE=""
 FETCH_MODE_ARGS=()
 SUMMARY_MODE_ARGS=()
+PUBLISH_MODE_ARGS=()
+
+append_args_from_env() {
+  local -n _target=$1
+  local _env_name=$2
+  local _env_value="${!_env_name:-}"
+  if [[ -n "$_env_value" ]]; then
+    read -r -a _extra <<< "$_env_value"
+    _target+=("${_extra[@]}")
+  fi
+}
 
 case "$MODE" in
   hourly)
@@ -55,10 +84,9 @@ case "$MODE" in
     fi
     FETCH_MODE_ARGS+=("--skip-if-run")
     SUMMARY_MODE_ARGS+=("--system-prompt-file" "$PROMPT_FILE")
-    if [[ -n "${MINERVA_HOURLY_ARGS:-}" ]]; then
-      read -r -a EXTRA <<< "${MINERVA_HOURLY_ARGS}"
-      SUMMARY_MODE_ARGS+=("${EXTRA[@]}")
-    fi
+    append_args_from_env FETCH_MODE_ARGS MINERVA_HOURLY_FETCH_ARGS
+    append_args_from_env SUMMARY_MODE_ARGS MINERVA_HOURLY_SUMMARY_ARGS
+    append_args_from_env PUBLISH_MODE_ARGS MINERVA_HOURLY_PUBLISH_ARGS
     ;;
   daily)
     PROMPT_FILE="$PROMPTS_DIR/daily.txt"
@@ -67,10 +95,9 @@ case "$MODE" in
       exit 1
     fi
     SUMMARY_MODE_ARGS+=("--system-prompt-file" "$PROMPT_FILE")
-    if [[ -n "${MINERVA_DAILY_ARGS:-}" ]]; then
-      read -r -a EXTRA <<< "${MINERVA_DAILY_ARGS}"
-      SUMMARY_MODE_ARGS+=("${EXTRA[@]}")
-    fi
+    append_args_from_env FETCH_MODE_ARGS MINERVA_DAILY_FETCH_ARGS
+    append_args_from_env SUMMARY_MODE_ARGS MINERVA_DAILY_SUMMARY_ARGS
+    append_args_from_env PUBLISH_MODE_ARGS MINERVA_DAILY_PUBLISH_ARGS
     ;;
   *)
     log "Unknown run mode: $MODE"
@@ -88,26 +115,12 @@ fi
 
 FETCH_ARGS+=("${FETCH_MODE_ARGS[@]}")
 SUMMARY_ARGS+=("${SUMMARY_MODE_ARGS[@]}")
+PUBLISH_ARGS+=("${PUBLISH_MODE_ARGS[@]}")
 
-if [[ -n "${MINERVA_FETCH_ARGS:-}" ]]; then
-  read -r -a EXTRA <<< "${MINERVA_FETCH_ARGS}"
-  FETCH_ARGS+=("${EXTRA[@]}")
-fi
-
-if [[ -n "${MINERVA_SUMMARY_ARGS:-}" ]]; then
-  read -r -a EXTRA <<< "${MINERVA_SUMMARY_ARGS}"
-  SUMMARY_ARGS+=("${EXTRA[@]}")
-fi
-
-if [[ -n "${MINERVA_SHARED_ARGS:-}" ]]; then
-  read -r -a EXTRA <<< "${MINERVA_SHARED_ARGS}"
-  SUMMARY_ARGS+=("${EXTRA[@]}")
-fi
-
-if [[ -n "${MINERVA_PUBLISH_ARGS:-}" ]]; then
-  read -r -a EXTRA <<< "${MINERVA_PUBLISH_ARGS}"
-  PUBLISH_ARGS+=("${EXTRA[@]}")
-fi
+append_args_from_env FETCH_ARGS MINERVA_FETCH_ARGS
+append_args_from_env SUMMARY_ARGS MINERVA_SUMMARY_ARGS
+append_args_from_env SUMMARY_ARGS MINERVA_SHARED_ARGS
+append_args_from_env PUBLISH_ARGS MINERVA_PUBLISH_ARGS
 
 if [[ $# -gt 0 ]]; then
   SUMMARY_ARGS+=("$@")
