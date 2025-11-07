@@ -14,6 +14,7 @@ from ..pipeline import (
     DEFAULT_MODELS,
     deserialise_todo_list,
     load_system_prompt,
+    read_run_markers,
     summarise_with_groq,
     summarise_with_openrouter,
     write_run_markers,
@@ -159,8 +160,17 @@ def main(argv: list[str] | None = None) -> None:
     run_cache_file = dump.metadata.get("run_cache_file")
     if run_cache_file and dump.run_markers:
         cache_path = Path(run_cache_file)
-        write_run_markers(dump.run_markers, cache_path)
-        logger.debug("Persisted run markers to %s", cache_path)
+        existing_markers: dict[str, str] = {}
+        if cache_path.exists():
+            try:
+                existing_markers = read_run_markers(cache_path)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Unable to read existing run markers from %s: %s", cache_path, exc)
+        merged_markers = {**existing_markers, **dump.run_markers}
+        write_run_markers(merged_markers, cache_path)
+        logger.debug(
+            "Persisted %d run markers to %s", len(merged_markers), cache_path
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
