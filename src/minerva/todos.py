@@ -50,7 +50,7 @@ def fetch_todo_lists(
         todo_list = _build_todo_list(document)
         if summary_group is not None:
             group_value = todo_list.data.get("summaryGroup")
-            if group_value != summary_group:
+            if group_value not in summary_group:
                 logger.debug(
                     "Skipping document %s because summaryGroup %r does not match %r",
                     document.id,
