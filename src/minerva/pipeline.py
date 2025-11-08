@@ -18,6 +18,8 @@ from telegram.error import TelegramError
 
 from .todos import Todo, TodoList
 
+import os
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODELS = {
