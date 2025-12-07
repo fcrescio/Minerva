@@ -18,6 +18,12 @@ set -euo pipefail
 #   MINERVA_DAILY_FETCH_ARGS      Extra fetch arguments for daily runs.
 #   MINERVA_DAILY_SUMMARY_ARGS    Extra summary arguments for daily runs.
 #   MINERVA_DAILY_PUBLISH_ARGS    Extra publish arguments for daily runs.
+#   MINERVA_PODCAST_ARGS          Extra arguments for podcast generation runs.
+#   MINERVA_DAILY_PODCAST_ARGS    Extra podcast arguments for daily runs.
+#   MINERVA_PODCAST_TELEGRAM_ARGS Extra Telegram arguments for podcast runs.
+#   MINERVA_PODCAST_TEXT_FILE     Override the default podcast script output file.
+#   MINERVA_PODCAST_AUDIO_FILE    Override the default podcast audio output file.
+#   MINERVA_PODCAST_LANGUAGE      Language to request for the generated podcast script.
 
 source /etc/container.env
 
@@ -47,9 +53,17 @@ RUN_CACHE_FILE="${MINERVA_RUN_CACHE_FILE:-$STATE_DIR/summary_run_marker.txt}"
 TODO_DUMP_FILE="${MINERVA_TODO_DUMP_FILE:-$STATE_DIR/todo_dump.json}"
 SUMMARY_FILE="${MINERVA_SUMMARY_FILE:-$STATE_DIR/todo_summary.txt}"
 SPEECH_FILE="${MINERVA_SPEECH_FILE:-$STATE_DIR/todo-summary.wav}"
+PODCAST_TEXT_FILE="${MINERVA_PODCAST_TEXT_FILE:-$STATE_DIR/random_podcast.txt}"
+PODCAST_AUDIO_FILE="${MINERVA_PODCAST_AUDIO_FILE:-$STATE_DIR/random-podcast.wav}"
 
 mkdir -p "$STATE_DIR"
-mkdir -p "$(dirname "$RUN_CACHE_FILE")" "$(dirname "$TODO_DUMP_FILE")" "$(dirname "$SUMMARY_FILE")" "$(dirname "$SPEECH_FILE")"
+mkdir -p \
+  "$(dirname "$RUN_CACHE_FILE")" \
+  "$(dirname "$TODO_DUMP_FILE")" \
+  "$(dirname "$SUMMARY_FILE")" \
+  "$(dirname "$SPEECH_FILE")" \
+  "$(dirname "$PODCAST_TEXT_FILE")" \
+  "$(dirname "$PODCAST_AUDIO_FILE")"
 
 CONFIG_PATH="${MINERVA_CONFIG_PATH:-}"
 if [[ -z "$CONFIG_PATH" ]]; then
@@ -64,6 +78,7 @@ PROMPT_FILE=""
 FETCH_MODE_ARGS=()
 SUMMARY_MODE_ARGS=()
 PUBLISH_MODE_ARGS=()
+PODCAST_MODE_ARGS=()
 
 append_args_from_env() {
   local -n _target=$1
@@ -98,6 +113,7 @@ case "$MODE" in
     append_args_from_env FETCH_MODE_ARGS MINERVA_DAILY_FETCH_ARGS
     append_args_from_env SUMMARY_MODE_ARGS MINERVA_DAILY_SUMMARY_ARGS
     append_args_from_env PUBLISH_MODE_ARGS MINERVA_DAILY_PUBLISH_ARGS
+    append_args_from_env PODCAST_MODE_ARGS MINERVA_DAILY_PODCAST_ARGS
     ;;
   *)
     log "Unknown run mode: $MODE"
@@ -108,6 +124,7 @@ esac
 FETCH_ARGS=("--output" "$TODO_DUMP_FILE" "--run-cache-file" "$RUN_CACHE_FILE")
 SUMMARY_ARGS=("--todos" "$TODO_DUMP_FILE" "--output" "$SUMMARY_FILE")
 PUBLISH_ARGS=("--summary" "$SUMMARY_FILE" "--speech-output" "$SPEECH_FILE")
+PODCAST_ARGS=("--output" "$PODCAST_TEXT_FILE" "--speech-output" "$PODCAST_AUDIO_FILE")
 
 if [[ -n "$CONFIG_PATH" ]]; then
   FETCH_ARGS=("--config" "$CONFIG_PATH" "${FETCH_ARGS[@]}")
@@ -121,6 +138,14 @@ append_args_from_env FETCH_ARGS MINERVA_FETCH_ARGS
 append_args_from_env SUMMARY_ARGS MINERVA_SUMMARY_ARGS
 append_args_from_env SUMMARY_ARGS MINERVA_SHARED_ARGS
 append_args_from_env PUBLISH_ARGS MINERVA_PUBLISH_ARGS
+append_args_from_env PODCAST_ARGS MINERVA_PODCAST_ARGS
+append_args_from_env PODCAST_ARGS MINERVA_PODCAST_TELEGRAM_ARGS
+
+PODCAST_ARGS+=("${PODCAST_MODE_ARGS[@]}")
+
+if [[ -n "${MINERVA_PODCAST_LANGUAGE:-}" ]]; then
+  PODCAST_ARGS+=("--language" "$MINERVA_PODCAST_LANGUAGE")
+fi
 
 if [[ $# -gt 0 ]]; then
   SUMMARY_ARGS+=("$@")
@@ -148,5 +173,10 @@ fi
 
 log "Publishing summary"
 publish-summary "${PUBLISH_ARGS[@]}"
+
+if [[ "$MODE" == "daily" ]]; then
+  log "Generating random podcast"
+  generate-podcast "${PODCAST_ARGS[@]}"
+fi
 
 log "Completed $MODE summary run"

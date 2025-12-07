@@ -34,6 +34,13 @@ SYSTEM_PROMPT = (
     "Answer in italian language"
 )
 
+PODCAST_SYSTEM_PROMPT = (
+    "You are a creative podcast host who can pick engaging, wholesome topics at random. "
+    "Generate a concise script for a 2-3 minute episode that includes a title, a short "
+    "intro hook, two or three key talking points, and a friendly sign-off. "
+    "Keep the tone upbeat and curious, use clear language, and avoid sensitive subjects."
+)
+
 
 def summarise_with_openrouter(
     todos: Iterable[TodoList],
@@ -137,6 +144,71 @@ def summarise_with_groq(
             logger.debug("Received Groq delta chunk with %d characters", len(delta))
 
     return "".join(parts).strip()
+
+
+def generate_random_podcast_script(
+    *,
+    model: str,
+    temperature: float = 0.7,
+    max_output_tokens: int | None = 800,
+    language: str | None = None,
+) -> str:
+    """Return a short podcast script generated with OpenRouter."""
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY environment variable is not set.")
+
+    language_clause = (
+        f"Write the entire script in {language}. " if language else ""
+    )
+    user_prompt = (
+        "Pick a surprising, family-friendly topic at random and craft a brief script "
+        "for a 2-3 minute podcast episode. Include a catchy title, an inviting "
+        "opening, a handful of vivid talking points, and a warm sign-off. Avoid "
+        "reusing the same subject across runs. "
+        f"{language_clause}"
+    )
+
+    payload: dict[str, object] = {
+        "model": model,
+        "temperature": temperature,
+        "messages": [
+            {"role": "system", "content": PODCAST_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+
+    if max_output_tokens is not None:
+        payload["max_output_tokens"] = max_output_tokens
+        logger.debug("Set OpenRouter max_output_tokens to %s", max_output_tokens)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": os.environ.get(
+            "OPENROUTER_APP_URL", "https://github.com/fcrescio/Minerva"
+        ),
+        "X-Title": os.environ.get("OPENROUTER_APP_TITLE", "Minerva Random Podcast"),
+    }
+
+    logger.debug(
+        "Requesting random podcast script with model=%s temperature=%s", model, temperature
+    )
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            content=json.dumps(payload),
+        )
+        response.raise_for_status()
+        logger.debug("OpenRouter podcast request completed with status %s", response.status_code)
+
+    data = response.json()
+    try:
+        return data["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError) as exc:  # pragma: no cover - defensive fallback
+        raise RuntimeError("Unexpected response from OpenRouter") from exc
 
 def load_system_prompt(path: str | None) -> str:
     """Return the system prompt, optionally loaded from ``path``."""
@@ -567,6 +639,7 @@ __all__ = [
     "deserialise_todo_list",
     "extract_audio_urls",
     "format_todo_for_prompt",
+    "generate_random_podcast_script",
     "load_system_prompt",
     "normalise_metadata_value",
     "post_summary_to_telegram",

@@ -19,6 +19,7 @@ list-todos = "minerva.main:main"
 fetch-todos = "minerva.tools.fetch:main"
 summarize-todos = "minerva.tools.summarise:main"
 publish-summary = "minerva.tools.publish:main"
+generate-podcast = "minerva.tools.podcast:main"
 
 [tool.uv]
 package = true
