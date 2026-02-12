@@ -153,6 +153,7 @@ def generate_random_podcast_script(
     temperature: float = 0.7,
     max_output_tokens: int | None = 800,
     language: str | None = None,
+    previous_topic_summaries: Iterable[str] | None = None,
 ) -> str:
     """Return a short podcast script generated with OpenRouter."""
 
@@ -163,11 +164,21 @@ def generate_random_podcast_script(
     language_clause = (
         f"Write the entire script in {language}. " if language else ""
     )
+    previous_topics = [topic.strip() for topic in (previous_topic_summaries or []) if topic.strip()]
+    previous_topics_clause = ""
+    if previous_topics:
+        formatted_topics = "\n".join(f"- {topic}" for topic in previous_topics)
+        previous_topics_clause = (
+            "Do not reuse any of these previously generated topics:\n"
+            f"{formatted_topics}\n"
+        )
+
     user_prompt = (
         "Pick a surprising, family-friendly topic at random and craft a brief script "
         "for a 2-3 minute podcast episode. Include a catchy title, an inviting "
         "opening, a handful of vivid talking points, and a warm sign-off. Avoid "
         "reusing the same subject across runs. "
+        f"{previous_topics_clause}"
         f"{language_clause}"
     )
 

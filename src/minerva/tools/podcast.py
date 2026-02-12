@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -21,6 +22,54 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TEXT_OUTPUT = "random_podcast.txt"
 DEFAULT_AUDIO_OUTPUT = "random-podcast.wav"
+DEFAULT_TOPIC_HISTORY_OUTPUT = "random_podcast_topics.txt"
+
+
+def normalize_topic_summary(text: str, *, max_length: int = 160) -> str:
+    """Return a compact, one-line topic summary suitable for history tracking."""
+
+    clean = re.sub(r"\s+", " ", text).strip(" -:\t")
+    if len(clean) <= max_length:
+        return clean
+    return clean[: max_length - 1].rstrip() + "…"
+
+
+def summarize_generated_topic(script_text: str) -> str:
+    """Extract a one-line topic summary from a generated podcast script."""
+
+    lines = [line.strip() for line in script_text.splitlines() if line.strip()]
+    if not lines:
+        return "Untitled topic"
+
+    first_line = lines[0]
+    lowered = first_line.lower()
+    if lowered.startswith("title:"):
+        title = first_line.split(":", 1)[1].strip()
+        if title:
+            return normalize_topic_summary(title)
+
+    return normalize_topic_summary(first_line)
+
+
+def load_topic_history(path: Path, *, max_entries: int) -> list[str]:
+    """Read previously generated one-line topic summaries from disk."""
+
+    try:
+        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    except FileNotFoundError:
+        return []
+
+    topics = [line for line in lines if line]
+    if max_entries <= 0:
+        return topics
+    return topics[-max_entries:]
+
+
+def save_topic_history(path: Path, topics: list[str]) -> None:
+    """Persist one-line topic summaries to disk."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(topics) + "\n", encoding="utf-8")
 
 
 def resolve_telegram_chat_ids(raw_values: list[str] | None) -> list[str]:
@@ -82,6 +131,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional language to write and narrate the podcast in (e.g. italian, french).",
     )
     parser.add_argument(
+        "--topic-history-file",
+        default=DEFAULT_TOPIC_HISTORY_OUTPUT,
+        help="Path to the file that stores one-line summaries of previous podcast topics.",
+    )
+    parser.add_argument(
+        "--topic-history-limit",
+        type=int,
+        default=25,
+        help="Number of recent topics to include in the next generation prompt.",
+    )
+    parser.add_argument(
         "--telegram",
         dest="telegram",
         action=argparse.BooleanOptionalAction,
@@ -131,12 +191,19 @@ def main(argv: list[str] | None = None) -> None:
     raw_chat_ids = args.telegram_chat_id or [os.environ.get("TELEGRAM_CHAT_ID", "")]
     telegram_chat_ids = resolve_telegram_chat_ids(raw_chat_ids)
 
+    topic_history_path = Path(args.topic_history_file)
+    previous_topics = load_topic_history(
+        topic_history_path,
+        max_entries=max(args.topic_history_limit, 0),
+    )
+
     try:
         script_text = generate_random_podcast_script(
             model=model,
             temperature=args.temperature,
             max_output_tokens=args.max_output_tokens,
             language=args.language,
+            previous_topic_summaries=previous_topics,
         )
     except RuntimeError as exc:
         logger.error("Failed to generate podcast script: %s", exc)
@@ -146,6 +213,12 @@ def main(argv: list[str] | None = None) -> None:
     output_path = Path(args.output)
     output_path.write_text(script_text, encoding="utf-8")
     logger.info("Podcast script written to %s", output_path)
+
+    topic_summary = summarize_generated_topic(script_text)
+    updated_topics = previous_topics + [topic_summary]
+    save_topic_history(topic_history_path, updated_topics)
+    logger.info("Saved topic summary to %s: %s", topic_history_path, topic_summary)
+
     print(script_text)
 
     speech_path: Path | None = None
