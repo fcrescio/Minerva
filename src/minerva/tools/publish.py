@@ -14,6 +14,21 @@ from ..pipeline import post_summary_to_telegram, post_text_to_telegram, synthesi
 logger = logging.getLogger(__name__)
 
 
+def resolve_telegram_chat_ids(raw_values: list[str] | None) -> list[str]:
+    """Return cleaned Telegram chat IDs parsed from CLI flags or env vars."""
+
+    if not raw_values:
+        return []
+
+    chat_ids: list[str] = []
+    for raw_value in raw_values:
+        for value in raw_value.split(","):
+            chat_id = value.strip()
+            if chat_id:
+                chat_ids.append(chat_id)
+    return chat_ids
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Publish summaries to Telegram as voice notes or plain text messages.",
@@ -57,8 +72,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--telegram-chat-id",
-        default=os.environ.get("TELEGRAM_CHAT_ID"),
-        help="Telegram chat or channel ID where the audio should be posted.",
+        action="append",
+        default=None,
+        help=(
+            "Telegram chat or channel ID where the audio should be posted. "
+            "Pass the flag multiple times or provide a comma-separated list "
+            "to post to multiple channels."
+        ),
     )
     parser.add_argument(
         "--caption",
@@ -80,6 +100,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(args.log_level)
     logger.debug("CLI arguments: %s", args)
+
+    raw_chat_ids = args.telegram_chat_id or [os.environ.get("TELEGRAM_CHAT_ID", "")]
+    telegram_chat_ids = resolve_telegram_chat_ids(raw_chat_ids)
 
     if args.voice:
         if args.existing_audio:
@@ -106,24 +129,25 @@ def main(argv: list[str] | None = None) -> None:
             logger.debug("Telegram upload disabled via CLI option")
             return
 
-        if not args.telegram_token or not args.telegram_chat_id:
+        if not args.telegram_token or not telegram_chat_ids:
             print("Telegram bot token or chat ID missing; skipping Telegram upload.", file=sys.stderr)
             return
 
         caption = args.caption or datetime.now(timezone.utc).isoformat()
 
         try:
-            post_summary_to_telegram(
-                speech_path,
-                token=args.telegram_token,
-                chat_id=args.telegram_chat_id,
-                caption=caption,
-            )
+            for chat_id in telegram_chat_ids:
+                post_summary_to_telegram(
+                    speech_path,
+                    token=args.telegram_token,
+                    chat_id=chat_id,
+                    caption=caption,
+                )
         except Exception as exc:  # pragma: no cover - network call
             print(f"Failed to upload summary to Telegram: {exc}", file=sys.stderr)
             return
 
-        print("Telegram upload completed successfully.")
+        print(f"Telegram upload completed successfully for {len(telegram_chat_ids)} chat(s).")
         return
 
     if args.existing_audio:
@@ -151,21 +175,22 @@ def main(argv: list[str] | None = None) -> None:
         print("Summary text is empty; nothing to send to Telegram.", file=sys.stderr)
         return
 
-    if not args.telegram_token or not args.telegram_chat_id:
+    if not args.telegram_token or not telegram_chat_ids:
         print("Telegram bot token or chat ID missing; skipping Telegram upload.", file=sys.stderr)
         return
 
     try:
-        post_text_to_telegram(
-            message_text,
-            token=args.telegram_token,
-            chat_id=args.telegram_chat_id,
-        )
+        for chat_id in telegram_chat_ids:
+            post_text_to_telegram(
+                message_text,
+                token=args.telegram_token,
+                chat_id=chat_id,
+            )
     except Exception as exc:  # pragma: no cover - network call
         print(f"Failed to send summary text to Telegram: {exc}", file=sys.stderr)
         return
 
-    print("Telegram text message sent successfully.")
+    print(f"Telegram text message sent successfully to {len(telegram_chat_ids)} chat(s).")
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
