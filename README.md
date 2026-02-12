@@ -92,9 +92,11 @@ output of one command acts as the input for the next:
      pass an existing audio file with `--existing-audio`.
    * Upload the narration to Telegram with `--telegram` (enabled by default) and
      the `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` environment variables or the
-     matching CLI flags. The chat ID can be numeric or a channel handle (e.g.
-     `@my_channel`). Converting audio for Telegram voice messages requires an
-     `ffmpeg` binary available on your `PATH`.
+     matching CLI flags. You can target multiple destinations by passing
+     `--telegram-chat-id` more than once or via a comma-separated list. Each
+     chat ID can be numeric or a channel handle (e.g. `@my_channel`).
+     Converting audio for Telegram voice messages requires an `ffmpeg` binary
+     available on your `PATH`.
 
 Each command prints human-friendly progress information and can be composed with
 other tooling or scheduled jobs to tailor the automation to your needs.
