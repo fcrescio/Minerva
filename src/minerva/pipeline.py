@@ -42,6 +42,15 @@ PODCAST_SYSTEM_PROMPT = (
     "Keep the tone upbeat and curious, use clear language, and avoid sensitive subjects."
 )
 
+PODCAST_USER_PROMPT_TEMPLATE = (
+    "Pick a surprising, family-friendly topic at random and craft a brief script "
+    "for a 2-3 minute podcast episode. Include a catchy title, an inviting "
+    "opening, a handful of vivid talking points, and a warm sign-off. Avoid "
+    "reusing the same subject across runs. "
+    "{previous_topics_clause}"
+    "{language_clause}"
+)
+
 
 def summarise_with_openrouter(
     todos: Iterable[TodoList],
@@ -154,6 +163,7 @@ def generate_random_podcast_script(
     max_output_tokens: int | None = 800,
     language: str | None = None,
     previous_topic_summaries: Iterable[str] | None = None,
+    user_prompt_template_path: str | None = None,
 ) -> str:
     """Return a short podcast script generated with OpenRouter."""
 
@@ -173,13 +183,13 @@ def generate_random_podcast_script(
             f"{formatted_topics}\n"
         )
 
-    user_prompt = (
-        "Pick a surprising, family-friendly topic at random and craft a brief script "
-        "for a 2-3 minute podcast episode. Include a catchy title, an inviting "
-        "opening, a handful of vivid talking points, and a warm sign-off. Avoid "
-        "reusing the same subject across runs. "
-        f"{previous_topics_clause}"
-        f"{language_clause}"
+    user_prompt_template = load_podcast_user_prompt_template(user_prompt_template_path)
+    user_prompt = render_podcast_user_prompt(
+        user_prompt_template,
+        language=language,
+        language_clause=language_clause,
+        previous_topics=previous_topics,
+        previous_topics_clause=previous_topics_clause,
     )
 
     payload: dict[str, object] = {
@@ -221,6 +231,57 @@ def generate_random_podcast_script(
         return data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:  # pragma: no cover - defensive fallback
         raise RuntimeError("Unexpected response from OpenRouter") from exc
+
+
+def load_podcast_user_prompt_template(path: str | None) -> str:
+    """Return podcast user prompt template, optionally loaded from ``path``."""
+
+    if not path:
+        return PODCAST_USER_PROMPT_TEMPLATE
+
+    template_path = Path(path)
+    try:
+        contents = template_path.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - filesystem errors
+        raise RuntimeError(
+            f"Failed to read podcast prompt template file {template_path}: {exc}"
+        ) from exc
+
+    stripped = contents.strip()
+    if not stripped:
+        raise RuntimeError(
+            f"Podcast prompt template file {template_path} is empty after stripping whitespace."
+        )
+
+    return stripped
+
+
+def render_podcast_user_prompt(
+    template: str,
+    *,
+    language: str | None,
+    language_clause: str,
+    previous_topics: Iterable[str],
+    previous_topics_clause: str,
+) -> str:
+    """Render a podcast prompt template with supported placeholders."""
+
+    placeholder_values = {
+        "language": language or "",
+        "language_clause": language_clause,
+        "previous_topics": "\n".join(previous_topics),
+        "previous_topics_clause": previous_topics_clause,
+    }
+    try:
+        return template.format(**placeholder_values)
+    except KeyError as exc:
+        missing = exc.args[0]
+        raise RuntimeError(
+            "Unknown placeholder in podcast prompt template: "
+            f"{{{missing}}}. Supported placeholders are: "
+            "{language}, {language_clause}, {previous_topics}, {previous_topics_clause}."
+        ) from exc
+
 
 def load_system_prompt(path: str | None) -> str:
     """Return the system prompt, optionally loaded from ``path``."""
@@ -664,5 +725,4 @@ __all__ = [
     "synthesise_speech",
     "write_run_markers",
 ]
-
 

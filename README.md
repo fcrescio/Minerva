@@ -100,3 +100,22 @@ output of one command acts as the input for the next:
 
 Each command prints human-friendly progress information and can be composed with
 other tooling or scheduled jobs to tailor the automation to your needs.
+
+
+## Generate a random podcast episode
+
+Create a random podcast script, optionally narrate it, and publish it to Telegram:
+
+```bash
+uv run generate-podcast --output random_podcast.txt
+```
+
+Useful options:
+
+* `--prompt-template-file` – Load the podcast user prompt from an external `.txt` template.
+  Supported placeholders are `{language}`, `{language_clause}`, `{previous_topics}`, and
+  `{previous_topics_clause}`.
+* `--topic-history-file` / `--topic-history-limit` – Track and inject recently used topics so
+  the next run can avoid repeating subjects.
+* `--speech` / `--no-speech` – Enable or disable speech synthesis for the generated script.
+* `--telegram-chat-id` (repeatable or comma-separated) – Publish to one or more Telegram chats.
