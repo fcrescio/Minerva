@@ -20,6 +20,10 @@ set -euo pipefail
 #   MINERVA_DAILY_PUBLISH_ARGS    Extra publish arguments for daily runs.
 #   MINERVA_PODCAST_ARGS          Extra arguments for podcast generation runs.
 #   MINERVA_DAILY_PODCAST_ARGS    Extra podcast arguments for daily runs.
+#   MINERVA_PODCAST_PROMPT_TEMPLATE_FILE
+#                                 Optional path to a custom podcast prompt template.
+#   MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE
+#                                 Daily-mode override for the podcast prompt template path.
 #   MINERVA_PODCAST_TELEGRAM_ARGS Extra Telegram arguments for podcast runs.
 #   MINERVA_PODCAST_TEXT_FILE     Override the default podcast script output file.
 #   MINERVA_PODCAST_AUDIO_FILE    Override the default podcast audio output file.
@@ -57,6 +61,7 @@ SPEECH_FILE="${MINERVA_SPEECH_FILE:-$STATE_DIR/todo-summary.wav}"
 PODCAST_TEXT_FILE="${MINERVA_PODCAST_TEXT_FILE:-$STATE_DIR/random_podcast.txt}"
 PODCAST_AUDIO_FILE="${MINERVA_PODCAST_AUDIO_FILE:-$STATE_DIR/random-podcast.wav}"
 PODCAST_TOPIC_FILE="${MINERVA_PODCAST_TOPIC_FILE:-$STATE_DIR/random_podcast_topics.txt}"
+PODCAST_PROMPT_TEMPLATE_FILE="${MINERVA_PODCAST_PROMPT_TEMPLATE_FILE:-}"
 
 mkdir -p "$STATE_DIR"
 mkdir -p \
@@ -117,6 +122,10 @@ case "$MODE" in
     append_args_from_env SUMMARY_MODE_ARGS MINERVA_DAILY_SUMMARY_ARGS
     append_args_from_env PUBLISH_MODE_ARGS MINERVA_DAILY_PUBLISH_ARGS
     append_args_from_env PODCAST_MODE_ARGS MINERVA_DAILY_PODCAST_ARGS
+
+    if [[ -n "${MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE:-}" ]]; then
+      PODCAST_PROMPT_TEMPLATE_FILE="$MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE"
+    fi
     ;;
   *)
     log "Unknown run mode: $MODE"
@@ -148,6 +157,10 @@ PODCAST_ARGS+=("${PODCAST_MODE_ARGS[@]}")
 
 if [[ -n "${MINERVA_PODCAST_LANGUAGE:-}" ]]; then
   PODCAST_ARGS+=("--language" "$MINERVA_PODCAST_LANGUAGE")
+fi
+
+if [[ -n "$PODCAST_PROMPT_TEMPLATE_FILE" ]]; then
+  PODCAST_ARGS+=("--prompt-template-file" "$PODCAST_PROMPT_TEMPLATE_FILE")
 fi
 
 if [[ $# -gt 0 ]]; then
