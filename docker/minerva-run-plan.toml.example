@@ -1,0 +1,23 @@
+[global]
+mode = "hourly"
+
+[global.env]
+MINERVA_LOG_LEVEL = "INFO"
+
+[global.paths]
+prompts_dir = "/data/prompts"
+
+[global.options]
+summary_args = "--provider openrouter"
+
+[[unit]]
+name = "hourly"
+schedule = "0 * * * *"
+enabled = true
+mode = "hourly"
+
+[[unit]]
+name = "daily"
+schedule = "0 6 * * *"
+enabled = true
+mode = "daily"

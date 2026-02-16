@@ -102,6 +102,73 @@ Each command prints human-friendly progress information and can be composed with
 other tooling or scheduled jobs to tailor the automation to your needs.
 
 
+
+## Container run-plan configuration
+
+The Docker entrypoint can now build cron jobs from a TOML run plan.
+By default it reads `/data/minerva-run-plan.toml`; override this with
+`MINERVA_RUN_PLAN_FILE`.
+
+If the file is missing, Minerva uses an in-memory default that preserves the
+previous behaviour:
+
+- `hourly` unit on `0 * * * *`
+- `daily` unit on `0 6 * * *`
+
+Schema:
+
+```toml
+[global]
+# optional default mode when a unit omits `mode`
+mode = "hourly"
+
+[global.env]
+# merged into process environment
+MINERVA_LOG_LEVEL = "INFO"
+
+[global.paths]
+# shared paths (unit values override these)
+prompts_dir = "/data/prompts"
+run_cache_file = "/data/state/summary_run_marker.txt"
+
+[global.options]
+# maps to MINERVA_* option env vars
+fetch_args = "--summary-group work"
+summary_args = "--provider openrouter"
+
+[global.providers]
+# exported as MINERVA_PROVIDER_<NAME>
+llm = "openrouter"
+
+[global.tokens]
+# exported as MINERVA_TOKEN_<NAME>
+openrouter = "${OPENROUTER_API_KEY}"
+
+[[unit]]
+name = "hourly"
+schedule = "0 * * * *"
+enabled = true
+mode = "hourly"
+
+  [unit.options]
+  hourly_fetch_args = "--skip-if-run"
+
+[[unit]]
+name = "daily"
+schedule = "0 6 * * *"
+enabled = true
+mode = "daily"
+
+  [unit.paths]
+  summary_file = "/data/state/daily-summary.txt"
+```
+
+The entrypoint generates one cron line per enabled unit and executes:
+
+```bash
+/usr/local/bin/minerva-run unit <unit-name> --plan <plan-file>
+```
+
 ## Generate a random podcast episode
 
 Create a random podcast script, optionally narrate it, and publish it to Telegram:
