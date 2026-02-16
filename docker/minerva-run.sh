@@ -42,14 +42,42 @@ else
 fi
 
 log() {
-  printf '[%s] [minerva-run] %s\n' "$(date --iso-8601=seconds)" "$*"
+  local unit_tag="${MINERVA_SELECTED_UNIT:-}"
+  if [[ -n "$unit_tag" ]]; then
+    printf '[%s] [minerva-run:%s] %s\n' "$(date --iso-8601=seconds)" "$unit_tag" "$*"
+  else
+    printf '[%s] [minerva-run] %s\n' "$(date --iso-8601=seconds)" "$*"
+  fi
 }
 
-load_unit_overrides() {
-  local unit_name="$1"
-  local plan_file="$2"
+usage() {
+  cat <<'USAGE'
+Usage:
+  minerva-run unit <name> [--plan <path>] [-- <summary args...>]
+  minerva-run list-units [--plan <path>]
+  minerva-run validate [--plan <path>]
 
-  python3 - "$unit_name" "$plan_file" <<'PY'
+Legacy compatibility:
+  minerva-run hourly [--plan <path>] [-- <summary args...>]
+  minerva-run daily [--plan <path>] [-- <summary args...>]
+USAGE
+}
+
+apply_if_unset() {
+  local name="$1"
+  local value="$2"
+  if [[ -z "${!name+x}" || -z "${!name}" ]]; then
+    printf -v "$name" '%s' "$value"
+    export "$name"
+  fi
+}
+
+run_plan_command() {
+  local command="$1"
+  local plan_file="$2"
+  local unit_name="${3:-}"
+
+  python3 - "$command" "$plan_file" "$unit_name" <<'PY'
 from __future__ import annotations
 
 import os
@@ -58,8 +86,9 @@ import shlex
 import sys
 import tomllib
 
-unit_name = sys.argv[1]
+command = sys.argv[1]
 plan_file = sys.argv[2]
+unit_name = sys.argv[3]
 
 
 def default_plan() -> dict[str, object]:
@@ -79,9 +108,12 @@ else:
     plan = default_plan()
 
 if not isinstance(plan, dict):
-    print("echo 'Invalid run plan format' >&2")
-    print("exit 2")
-    raise SystemExit
+    if command == "load-unit":
+        print("echo 'Invalid run plan format' >&2")
+        print("exit 2")
+    else:
+        print("Invalid run plan format", file=sys.stderr)
+    raise SystemExit(2)
 
 global_cfg = plan.get("global", {})
 if not isinstance(global_cfg, dict):
@@ -90,17 +122,6 @@ if not isinstance(global_cfg, dict):
 units = plan.get("unit", [])
 if not isinstance(units, list):
     units = []
-
-selected: dict[str, object] | None = None
-for unit in units:
-    if isinstance(unit, dict) and str(unit.get("name", "")).strip() == unit_name:
-        selected = unit
-        break
-
-if selected is None:
-    print(f"echo {shlex.quote(f'Run unit {unit_name!r} not found in plan {plan_file!r}')} >&2")
-    print("exit 2")
-    raise SystemExit
 
 
 def table(cfg: dict[str, object], key: str) -> dict[str, object]:
@@ -117,6 +138,67 @@ def merge_dicts(a: dict[str, object], b: dict[str, object]) -> dict[str, object]
 def sanitize_key(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_").upper()
 
+
+def get_selected_unit() -> dict[str, object] | None:
+    for unit in units:
+        if isinstance(unit, dict) and str(unit.get("name", "")).strip() == unit_name:
+            return unit
+    return None
+
+
+def list_units() -> int:
+    print("name\tschedule\tenabled\tmode")
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        name = str(unit.get("name", "")).strip()
+        schedule = str(unit.get("schedule", "")).strip()
+        enabled = unit.get("enabled", True)
+        mode = unit.get("mode") or name
+        if not name:
+            continue
+        print(f"{name}\t{schedule}\t{enabled}\t{mode}")
+    return 0
+
+
+def validate_units() -> int:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for idx, unit in enumerate(units):
+        if not isinstance(unit, dict):
+            errors.append(f"unit[{idx}] must be a table")
+            continue
+        name = str(unit.get("name", "")).strip()
+        schedule = str(unit.get("schedule", "")).strip()
+        if not name:
+            errors.append(f"unit[{idx}] is missing a non-empty name")
+        elif name in seen:
+            errors.append(f"duplicate unit name: {name}")
+        else:
+            seen.add(name)
+
+        if unit.get("enabled", True) and not schedule:
+            errors.append(f"unit[{idx}] ({name or 'unnamed'}) is enabled but has no schedule")
+
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+
+    print("Run plan is valid")
+    return 0
+
+
+if command == "list-units":
+    raise SystemExit(list_units())
+if command == "validate":
+    raise SystemExit(validate_units())
+
+selected = get_selected_unit()
+if selected is None:
+    print(f"echo {shlex.quote(f'Run unit {unit_name!r} not found in plan {plan_file!r}')} >&2")
+    print("exit 2")
+    raise SystemExit
 
 paths_map = {
     "data_dir": "MINERVA_DATA_DIR",
@@ -164,7 +246,8 @@ mode = selected.get("mode") or global_cfg.get("mode") or selected.get("name")
 
 
 def emit(name: str, value: object) -> None:
-    print(f"export {name}={shlex.quote(str(value))}")
+    print(f"apply_if_unset {shlex.quote(name)} {shlex.quote(str(value))}")
+
 
 for key, value in merged_env.items():
     key_text = str(key)
@@ -187,54 +270,113 @@ for key, value in merged_providers.items():
 for key, value in merged_tokens.items():
     emit(f"MINERVA_TOKEN_{sanitize_key(str(key))}", value)
 
-print(f"MODE={shlex.quote(str(mode))}")
+print(f"export MINERVA_SELECTED_MODE={shlex.quote(str(mode))}")
+print(f"export MINERVA_SELECTED_UNIT={shlex.quote(unit_name)}")
 PY
 }
 
-MODE="${1:-}"
-if [[ -z "$MODE" ]]; then
-  log "Usage: minerva-run <hourly|daily|unit <name> --plan <file>>"
+SUBCOMMAND="${1:-}"
+if [[ -z "$SUBCOMMAND" ]]; then
+  usage
   exit 2
 fi
 shift || true
 
-if [[ "$MODE" == "unit" ]]; then
-  UNIT_NAME="${1:-}"
-  if [[ -z "$UNIT_NAME" ]]; then
-    log "Usage: minerva-run unit <unit-name> --plan <file>"
-    exit 2
-  fi
-  shift || true
+PLAN_FILE="${MINERVA_RUN_PLAN_FILE:-${MINERVA_DATA_DIR:-/data}/minerva-run-plan.toml}"
+UNIT_NAME=""
 
-  PLAN_FILE="${MINERVA_RUN_PLAN_FILE:-${MINERVA_DATA_DIR:-/data}/minerva-run-plan.toml}"
-  EXTRA_ARGS=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --plan)
-        if [[ $# -lt 2 ]]; then
-          log "Missing value for --plan"
-          exit 2
-        fi
-        PLAN_FILE="$2"
-        shift 2
-        ;;
-      --)
-        shift
-        EXTRA_ARGS+=("$@")
-        break
-        ;;
-      *)
-        EXTRA_ARGS+=("$1")
-        shift
-        ;;
-    esac
-  done
-
-  # shellcheck disable=SC1090
-  eval "$(load_unit_overrides "$UNIT_NAME" "$PLAN_FILE")"
-  set -- "${EXTRA_ARGS[@]}"
+if [[ "$SUBCOMMAND" == "hourly" || "$SUBCOMMAND" == "daily" ]]; then
+  UNIT_NAME="$SUBCOMMAND"
+  SUBCOMMAND="unit"
 fi
 
+case "$SUBCOMMAND" in
+  list-units)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --plan)
+          if [[ $# -lt 2 ]]; then
+            log "Missing value for --plan"
+            exit 2
+          fi
+          PLAN_FILE="$2"
+          shift 2
+          ;;
+        *)
+          log "Unknown argument for list-units: $1"
+          usage
+          exit 2
+          ;;
+      esac
+    done
+    run_plan_command "list-units" "$PLAN_FILE"
+    exit 0
+    ;;
+  validate)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --plan)
+          if [[ $# -lt 2 ]]; then
+            log "Missing value for --plan"
+            exit 2
+          fi
+          PLAN_FILE="$2"
+          shift 2
+          ;;
+        *)
+          log "Unknown argument for validate: $1"
+          usage
+          exit 2
+          ;;
+      esac
+    done
+    run_plan_command "validate" "$PLAN_FILE"
+    exit $?
+    ;;
+  unit)
+    if [[ -z "$UNIT_NAME" ]]; then
+      UNIT_NAME="${1:-}"
+      shift || true
+    fi
+    if [[ -z "$UNIT_NAME" ]]; then
+      usage
+      exit 2
+    fi
+
+    EXTRA_ARGS=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --plan)
+          if [[ $# -lt 2 ]]; then
+            log "Missing value for --plan"
+            exit 2
+          fi
+          PLAN_FILE="$2"
+          shift 2
+          ;;
+        --)
+          shift
+          EXTRA_ARGS+=("$@")
+          break
+          ;;
+        *)
+          EXTRA_ARGS+=("$1")
+          shift
+          ;;
+      esac
+    done
+
+    # shellcheck disable=SC1090
+    eval "$(run_plan_command "load-unit" "$PLAN_FILE" "$UNIT_NAME")"
+    set -- "${EXTRA_ARGS[@]}"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+MODE="${MINERVA_SELECTED_MODE:-$UNIT_NAME}"
 DATA_DIR="${MINERVA_DATA_DIR:-/data}"
 STATE_DIR="${MINERVA_STATE_DIR:-$DATA_DIR/state}"
 PROMPTS_DIR="${MINERVA_PROMPTS_DIR:-$DATA_DIR/prompts}"
@@ -282,40 +424,36 @@ append_args_from_env() {
   fi
 }
 
-case "$MODE" in
-  hourly)
-    PROMPT_FILE="$PROMPTS_DIR/hourly.txt"
-    if [[ ! -f "$PROMPT_FILE" ]]; then
-      log "Hourly system prompt not found at $PROMPT_FILE"
-      exit 1
-    fi
-    FETCH_MODE_ARGS+=("--skip-if-run")
-    SUMMARY_MODE_ARGS+=("--system-prompt-file" "$PROMPT_FILE")
-    append_args_from_env FETCH_MODE_ARGS MINERVA_HOURLY_FETCH_ARGS
-    append_args_from_env SUMMARY_MODE_ARGS MINERVA_HOURLY_SUMMARY_ARGS
-    append_args_from_env PUBLISH_MODE_ARGS MINERVA_HOURLY_PUBLISH_ARGS
-    ;;
-  daily)
-    PROMPT_FILE="$PROMPTS_DIR/daily.txt"
-    if [[ ! -f "$PROMPT_FILE" ]]; then
-      log "Daily system prompt not found at $PROMPT_FILE"
-      exit 1
-    fi
-    SUMMARY_MODE_ARGS+=("--system-prompt-file" "$PROMPT_FILE")
-    append_args_from_env FETCH_MODE_ARGS MINERVA_DAILY_FETCH_ARGS
-    append_args_from_env SUMMARY_MODE_ARGS MINERVA_DAILY_SUMMARY_ARGS
-    append_args_from_env PUBLISH_MODE_ARGS MINERVA_DAILY_PUBLISH_ARGS
-    append_args_from_env PODCAST_MODE_ARGS MINERVA_DAILY_PODCAST_ARGS
+if [[ "$MODE" == "hourly" ]]; then
+  PROMPT_FILE="$PROMPTS_DIR/hourly.txt"
+  if [[ ! -f "$PROMPT_FILE" ]]; then
+    log "Hourly system prompt not found at $PROMPT_FILE"
+    exit 1
+  fi
+  FETCH_MODE_ARGS+=("--skip-if-run")
+  SUMMARY_MODE_ARGS+=("--system-prompt-file" "$PROMPT_FILE")
+  append_args_from_env FETCH_MODE_ARGS MINERVA_HOURLY_FETCH_ARGS
+  append_args_from_env SUMMARY_MODE_ARGS MINERVA_HOURLY_SUMMARY_ARGS
+  append_args_from_env PUBLISH_MODE_ARGS MINERVA_HOURLY_PUBLISH_ARGS
+elif [[ "$MODE" == "daily" ]]; then
+  PROMPT_FILE="$PROMPTS_DIR/daily.txt"
+  if [[ ! -f "$PROMPT_FILE" ]]; then
+    log "Daily system prompt not found at $PROMPT_FILE"
+    exit 1
+  fi
+  SUMMARY_MODE_ARGS+=("--system-prompt-file" "$PROMPT_FILE")
+  append_args_from_env FETCH_MODE_ARGS MINERVA_DAILY_FETCH_ARGS
+  append_args_from_env SUMMARY_MODE_ARGS MINERVA_DAILY_SUMMARY_ARGS
+  append_args_from_env PUBLISH_MODE_ARGS MINERVA_DAILY_PUBLISH_ARGS
+  append_args_from_env PODCAST_MODE_ARGS MINERVA_DAILY_PODCAST_ARGS
 
-    if [[ -n "${MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE:-}" ]]; then
-      PODCAST_PROMPT_TEMPLATE_FILE="$MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE"
-    fi
-    ;;
-  *)
-    log "Unknown run mode: $MODE"
-    exit 2
-    ;;
-esac
+  if [[ -n "${MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE:-}" ]]; then
+    PODCAST_PROMPT_TEMPLATE_FILE="$MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE"
+  fi
+else
+  log "Unknown run mode '$MODE' for unit '${MINERVA_SELECTED_UNIT:-$UNIT_NAME}'"
+  exit 2
+fi
 
 FETCH_ARGS=("--output" "$TODO_DUMP_FILE" "--run-cache-file" "$RUN_CACHE_FILE")
 SUMMARY_ARGS=("--todos" "$TODO_DUMP_FILE" "--output" "$SUMMARY_FILE")

@@ -169,6 +169,24 @@ The entrypoint generates one cron line per enabled unit and executes:
 /usr/local/bin/minerva-run unit <unit-name> --plan <plan-file>
 ```
 
+You can inspect and validate the run plan directly from the CLI:
+
+```bash
+minerva-run list-units --plan /data/minerva-run-plan.toml
+minerva-run validate --plan /data/minerva-run-plan.toml
+```
+
+`minerva-run hourly` and `minerva-run daily` are still accepted for backward
+compatibility and are mapped to `unit hourly` / `unit daily`.
+
+Configuration is merged in this deterministic order:
+
+1. built-in defaults
+2. `[global]`
+3. `[[unit]]`
+4. environment overrides (if set)
+5. CLI overrides
+
 ## Generate a random podcast episode
 
 Create a random podcast script, optionally narrate it, and publish it to Telegram:
