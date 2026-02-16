@@ -131,6 +131,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional language to write and narrate the podcast in (e.g. italian, french).",
     )
     parser.add_argument(
+        "--prompt-template-file",
+        default=None,
+        help=(
+            "Optional path to a TXT template used for the podcast user prompt. "
+            "Supported placeholders: {language}, {language_clause}, {previous_topics}, "
+            "{previous_topics_clause}."
+        ),
+    )
+    parser.add_argument(
         "--topic-history-file",
         default=DEFAULT_TOPIC_HISTORY_OUTPUT,
         help="Path to the file that stores one-line summaries of previous podcast topics.",
@@ -204,6 +213,7 @@ def main(argv: list[str] | None = None) -> None:
             max_output_tokens=args.max_output_tokens,
             language=args.language,
             previous_topic_summaries=previous_topics,
+            user_prompt_template_path=args.prompt_template_file,
         )
     except RuntimeError as exc:
         logger.error("Failed to generate podcast script: %s", exc)
