@@ -1,0 +1,61 @@
+[global]
+mode = "hourly"
+actions = ["fetch", "summarize", "publish"]
+
+[global.env]
+MINERVA_LOG_LEVEL = "INFO"
+
+[global.paths]
+data_dir = "/data"
+state_dir = "/data/state"
+prompts_dir = "/data/prompts"
+
+[global.options]
+summary_args = "--provider openrouter"
+
+[global.action.fetch]
+args = ["--collection", "sessions"]
+
+[global.action.publish]
+args = ["--telegram-caption", "Minerva update"]
+
+# Equivalent to legacy hourly mode with MINERVA_HOURLY_* overrides.
+[[unit]]
+name = "hourly"
+schedule = "0 * * * *"
+enabled = true
+mode = "hourly"
+
+  [unit.options]
+  hourly_fetch_args = "--skip-if-run"
+
+# Equivalent to legacy daily mode with podcast enabled.
+[[unit]]
+name = "daily"
+schedule = "0 6 * * *"
+enabled = true
+mode = "daily"
+actions = ["fetch", "summarize", "publish", "podcast"]
+
+  [unit.options]
+  daily_podcast_args = "--post-to-telegram"
+
+  [unit.action.publish]
+  args = ["--telegram-caption", "Daily digest"]
+
+# Extra custom unit demonstrating a different cadence and action list.
+[[unit]]
+name = "lunchtime-brief"
+schedule = "30 12 * * 1-5"
+enabled = true
+mode = "hourly"
+actions = ["fetch", "summarize"]
+
+  [unit.paths]
+  summary_file = "/data/state/lunchtime-brief.txt"
+
+  [unit.options]
+  fetch_args = "--summary-group work"
+
+  [unit.action.summarize]
+  args = ["--provider", "groq"]
