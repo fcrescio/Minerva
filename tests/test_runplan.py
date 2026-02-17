@@ -15,6 +15,7 @@ class RunPlanTests(unittest.TestCase):
                     "actions": ["fetch"],
                     "tokens": {"openrouter": "global-token"},
                     "secrets": {"telegram": "global-secret"},
+                    "action": {"fetch": {"args": ["--global-fetch"]}},
                 },
                 "unit": [
                     {
@@ -25,6 +26,7 @@ class RunPlanTests(unittest.TestCase):
                         "actions": ["summarize"],
                         "tokens": {"openrouter": "unit-token"},
                         "secrets": {"chat": "unit-secret"},
+                        "action": {"fetch": {"args": ["--unit-fetch"]}},
                     }
                 ],
             },
@@ -38,6 +40,33 @@ class RunPlanTests(unittest.TestCase):
         self.assertEqual(merged.tokens["openrouter"], "unit-token")
         self.assertEqual(merged.secrets["telegram"], "global-secret")
         self.assertEqual(merged.secrets["chat"], "unit-secret")
+        self.assertEqual(merged.action_args["fetch"], ["--global-fetch", "--unit-fetch"])
+
+
+    def test_action_args_parse_and_merge_with_unit_only_action(self) -> None:
+        plan = RunPlan.from_mapping(
+            {
+                "global": {
+                    "actions": ["fetch"],
+                    "action": {"fetch": {"args": ["--global"]}},
+                },
+                "unit": [
+                    {
+                        "name": "u2",
+                        "schedule": "0 * * * *",
+                        "actions": ["summarize"],
+                        "action": {
+                            "fetch": {"args": ["--unit"]},
+                            "summarize": {"args": ["--provider", "openrouter"]},
+                        },
+                    }
+                ],
+            }
+        )
+
+        merged = plan.merged_unit(plan.units[0])
+        self.assertEqual(merged.action_args["fetch"], ["--global", "--unit"])
+        self.assertEqual(merged.action_args["summarize"], ["--provider", "openrouter"])
 
     def test_duplicate_unit_name_validation(self) -> None:
         with self.assertRaises(RunPlanValidationError) as ctx:

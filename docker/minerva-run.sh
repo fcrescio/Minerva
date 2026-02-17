@@ -95,8 +95,8 @@ def default_plan() -> dict[str, object]:
     return {
         "global": {},
         "unit": [
-            {"name": "hourly", "schedule": "0 * * * *", "enabled": True, "mode": "hourly"},
-            {"name": "daily", "schedule": "0 6 * * *", "enabled": True, "mode": "daily"},
+            {"name": "hourly", "schedule": "0 * * * *", "enabled": True, "mode": "hourly", "actions": ["fetch", "summarize", "publish"]},
+            {"name": "daily", "schedule": "0 6 * * *", "enabled": True, "mode": "daily", "actions": ["fetch", "summarize", "publish", "podcast"]},
         ],
     }
 
@@ -238,6 +238,30 @@ merged_paths = merge_dicts(table(global_cfg, "paths"), table(selected, "paths"))
 merged_options = merge_dicts(table(global_cfg, "options"), table(selected, "options"))
 merged_providers = merge_dicts(table(global_cfg, "providers"), table(selected, "providers"))
 merged_tokens = merge_dicts(table(global_cfg, "tokens"), table(selected, "tokens"))
+merged_global_actions = table(global_cfg, "action")
+merged_unit_actions = table(selected, "action")
+
+def merge_action_tables(a: dict[str, object], b: dict[str, object]) -> dict[str, object]:
+    merged = dict(a)
+    for key, value in b.items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        global_entry = merged.get(key_text, {})
+        global_args = []
+        if isinstance(global_entry, dict):
+            global_raw = global_entry.get("args", [])
+            if isinstance(global_raw, list):
+                global_args = [str(item).strip() for item in global_raw if str(item).strip()]
+        unit_args = []
+        if isinstance(value, dict):
+            unit_raw = value.get("args", [])
+            if isinstance(unit_raw, list):
+                unit_args = [str(item).strip() for item in unit_raw if str(item).strip()]
+        merged[key_text] = {"args": [*global_args, *unit_args]}
+    return merged
+
+merged_action_cfg = merge_action_tables(merged_global_actions, merged_unit_actions)
 
 if "config_path" in merged_options:
     merged_paths["config_path"] = merged_options.pop("config_path")
@@ -269,6 +293,30 @@ for key, value in merged_providers.items():
 
 for key, value in merged_tokens.items():
     emit(f"MINERVA_TOKEN_{sanitize_key(str(key))}", value)
+
+actions = selected.get("actions")
+if not isinstance(actions, list):
+    actions = []
+global_actions = global_cfg.get("actions")
+if isinstance(global_actions, list):
+    actions = [*global_actions, *actions]
+if not actions:
+    if str(mode) == "daily":
+        actions = ["fetch", "summarize", "publish", "podcast"]
+    else:
+        actions = ["fetch", "summarize", "publish"]
+
+print(f"export MINERVA_SELECTED_ACTIONS={shlex.quote(' '.join(str(item).strip() for item in actions if str(item).strip()))}")
+
+for action_name, action_cfg in merged_action_cfg.items():
+    if not isinstance(action_cfg, dict):
+        continue
+    args_raw = action_cfg.get("args", [])
+    if not isinstance(args_raw, list):
+        continue
+    normalized = [str(item).strip() for item in args_raw if str(item).strip()]
+    if normalized:
+        emit(f"MINERVA_ACTION_{sanitize_key(str(action_name))}_ARGS", " ".join(normalized))
 
 print(f"export MINERVA_SELECTED_MODE={shlex.quote(str(mode))}")
 print(f"export MINERVA_SELECTED_UNIT={shlex.quote(unit_name)}")
@@ -390,14 +438,7 @@ PODCAST_TOPIC_FILE="${MINERVA_PODCAST_TOPIC_FILE:-$STATE_DIR/random_podcast_topi
 PODCAST_PROMPT_TEMPLATE_FILE="${MINERVA_PODCAST_PROMPT_TEMPLATE_FILE:-}"
 
 mkdir -p "$STATE_DIR"
-mkdir -p \
-  "$(dirname "$RUN_CACHE_FILE")" \
-  "$(dirname "$TODO_DUMP_FILE")" \
-  "$(dirname "$SUMMARY_FILE")" \
-  "$(dirname "$SPEECH_FILE")" \
-  "$(dirname "$PODCAST_TEXT_FILE")" \
-  "$(dirname "$PODCAST_AUDIO_FILE")" \
-  "$(dirname "$PODCAST_TOPIC_FILE")"
+mkdir -p   "$(dirname "$RUN_CACHE_FILE")"   "$(dirname "$TODO_DUMP_FILE")"   "$(dirname "$SUMMARY_FILE")"   "$(dirname "$SPEECH_FILE")"   "$(dirname "$PODCAST_TEXT_FILE")"   "$(dirname "$PODCAST_AUDIO_FILE")"   "$(dirname "$PODCAST_TOPIC_FILE")"
 
 CONFIG_PATH="${MINERVA_CONFIG_PATH:-}"
 if [[ -z "$CONFIG_PATH" ]]; then
@@ -422,6 +463,21 @@ append_args_from_env() {
     read -r -a _extra <<< "$_env_value"
     _target+=("${_extra[@]}")
   fi
+}
+
+sanitize_key() {
+  local value="$1"
+  value="${value//[^[:alnum:]]/_}"
+  value="${value##_}"
+  value="${value%%_}"
+  printf '%s' "${value^^}"
+}
+
+append_action_args() {
+  local -n _target=$1
+  local _action_name="$2"
+  local _env_name="MINERVA_ACTION_$(sanitize_key "$_action_name")_ARGS"
+  append_args_from_env _target "$_env_name"
 }
 
 if [[ "$MODE" == "hourly" ]]; then
@@ -450,9 +506,6 @@ elif [[ "$MODE" == "daily" ]]; then
   if [[ -n "${MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE:-}" ]]; then
     PODCAST_PROMPT_TEMPLATE_FILE="$MINERVA_DAILY_PODCAST_PROMPT_TEMPLATE_FILE"
   fi
-else
-  log "Unknown run mode '$MODE' for unit '${MINERVA_SELECTED_UNIT:-$UNIT_NAME}'"
-  exit 2
 fi
 
 FETCH_ARGS=("--output" "$TODO_DUMP_FILE" "--run-cache-file" "$RUN_CACHE_FILE")
@@ -469,10 +522,15 @@ SUMMARY_ARGS+=("${SUMMARY_MODE_ARGS[@]}")
 PUBLISH_ARGS+=("${PUBLISH_MODE_ARGS[@]}")
 
 append_args_from_env FETCH_ARGS MINERVA_FETCH_ARGS
+append_action_args FETCH_ARGS fetch
 append_args_from_env SUMMARY_ARGS MINERVA_SUMMARY_ARGS
+append_action_args SUMMARY_ARGS summarize
+append_action_args SUMMARY_ARGS summarise
 append_args_from_env SUMMARY_ARGS MINERVA_SHARED_ARGS
 append_args_from_env PUBLISH_ARGS MINERVA_PUBLISH_ARGS
+append_action_args PUBLISH_ARGS publish
 append_args_from_env PODCAST_ARGS MINERVA_PODCAST_ARGS
+append_action_args PODCAST_ARGS podcast
 append_args_from_env PODCAST_ARGS MINERVA_PODCAST_TELEGRAM_ARGS
 
 PODCAST_ARGS+=("${PODCAST_MODE_ARGS[@]}")
@@ -489,32 +547,58 @@ if [[ $# -gt 0 ]]; then
   SUMMARY_ARGS+=("$@")
 fi
 
-log "Starting $MODE summary run"
-
-log "Fetching todos"
-rm -f "$TODO_DUMP_FILE"
-fetch-todos "${FETCH_ARGS[@]}"
-
-if [[ ! -f "$TODO_DUMP_FILE" ]]; then
-  log "Todo dump not created; skipping summarisation and publication"
-  exit 0
+if [[ -n "${MINERVA_SELECTED_ACTIONS:-}" ]]; then
+  read -r -a ACTIONS <<< "$MINERVA_SELECTED_ACTIONS"
+else
+  ACTIONS=("fetch" "summarize" "publish")
+  if [[ "$MODE" == "daily" ]]; then
+    ACTIONS+=("podcast")
+  fi
 fi
 
-log "Generating summary"
-rm -f "$SUMMARY_FILE"
-summarize-todos "${SUMMARY_ARGS[@]}"
+log "Starting unit run with mode=$MODE actions=${ACTIONS[*]}"
 
-if [[ ! -f "$SUMMARY_FILE" ]]; then
-  log "Summary file not created; skipping publication"
-  exit 0
-fi
+for action in "${ACTIONS[@]}"; do
+  case "$action" in
+    fetch)
+      log "Fetching todos"
+      rm -f "$TODO_DUMP_FILE"
+      fetch-todos "${FETCH_ARGS[@]}"
+      if [[ ! -f "$TODO_DUMP_FILE" ]]; then
+        log "Todo dump not created; skipping downstream actions"
+        break
+      fi
+      ;;
+    summarize|summarise)
+      if [[ ! -f "$TODO_DUMP_FILE" ]]; then
+        log "Skipping summarize: missing todo dump at $TODO_DUMP_FILE"
+        break
+      fi
+      log "Generating summary"
+      rm -f "$SUMMARY_FILE"
+      summarize-todos "${SUMMARY_ARGS[@]}"
+      if [[ ! -f "$SUMMARY_FILE" ]]; then
+        log "Summary file not created; skipping downstream actions"
+        break
+      fi
+      ;;
+    publish)
+      if [[ ! -f "$SUMMARY_FILE" ]]; then
+        log "Skipping publish: missing summary at $SUMMARY_FILE"
+        break
+      fi
+      log "Publishing summary"
+      publish-summary "${PUBLISH_ARGS[@]}"
+      ;;
+    podcast)
+      log "Generating random podcast"
+      generate-podcast "${PODCAST_ARGS[@]}"
+      ;;
+    *)
+      log "Unknown action '$action' for unit '${MINERVA_SELECTED_UNIT:-$UNIT_NAME}'"
+      exit 2
+      ;;
+  esac
+done
 
-log "Publishing summary"
-publish-summary "${PUBLISH_ARGS[@]}"
-
-if [[ "$MODE" == "daily" ]]; then
-  log "Generating random podcast"
-  generate-podcast "${PODCAST_ARGS[@]}"
-fi
-
-log "Completed $MODE summary run"
+log "Completed unit run"
