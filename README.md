@@ -131,7 +131,9 @@ MINERVA_LOG_LEVEL = "INFO"
 [global.paths]
 # shared paths (unit values override these)
 prompts_dir = "/data/prompts"
-run_cache_file = "/data/state/summary_run_marker.txt"
+# optional: defaults now resolve under /data/state/units/<unit-name>/
+# unit_state_dir = "/data/state/units/hourly"
+run_cache_file = "/data/state/hourly-run-marker.txt"
 
 [global.options]
 # maps to MINERVA_* option env vars
@@ -192,6 +194,30 @@ compatibility and are mapped to `unit hourly` / `unit daily`.
 
 Actions are executed in order. Built-in action names are `fetch`, `summarize`, `publish`, and `podcast`.
 If a required artifact is missing (for example summary without todo dump), Minerva skips that action and all downstream actions for that unit run.
+
+### Per-unit state directory defaults and migration
+
+By default, each unit now writes runtime artifacts under:
+
+- `${MINERVA_STATE_DIR}/units/<unit-name>/`
+
+This means the default files are now resolved as:
+
+- `todo_dump.json`
+- `todo_summary.txt`
+- `todo-summary.wav`
+- `summary_run_marker.txt`
+- `random_podcast_topics.txt`
+
+inside the selected unit directory.
+
+This behavior keeps units isolated and avoids collisions between hourly/daily runs.
+
+Migration notes:
+
+- Existing setups that relied on shared single paths can keep the old behavior by setting explicit path overrides (for example `MINERVA_TODO_DUMP_FILE`, `MINERVA_SUMMARY_FILE`, `MINERVA_RUN_CACHE_FILE`, `MINERVA_SPEECH_FILE`, and `MINERVA_PODCAST_TOPIC_FILE`).
+- You can also set `unit_state_dir` in `[global.paths]` or `[unit.paths]` to choose a custom base directory per unit.
+- Minerva creates the unit directory (and any parent directories for overridden artifact paths) before actions execute.
 
 Configuration is merged in this deterministic order:
 
