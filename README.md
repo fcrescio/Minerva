@@ -105,127 +105,194 @@ other tooling or scheduled jobs to tailor the automation to your needs.
 
 ## Container run-plan configuration
 
-The Docker entrypoint can now build cron jobs from a TOML run plan.
-By default it reads `/data/minerva-run-plan.toml`; override this with
-`MINERVA_RUN_PLAN_FILE`.
+The Docker entrypoint builds cron jobs from a TOML run plan. By default it reads
+`/data/minerva-run-plan.toml`; override this path with `MINERVA_RUN_PLAN_FILE`.
+If the file is missing, Minerva uses an in-memory default equivalent to:
 
-If the file is missing, Minerva uses an in-memory default that preserves the
-previous behaviour:
+- `hourly` on `0 * * * *` with `fetch -> summarize -> publish`
+- `daily` on `0 6 * * *` with `fetch -> summarize -> publish -> podcast`
 
-- `hourly` unit on `0 * * * *` with actions `fetch -> summarize -> publish`
-- `daily` unit on `0 6 * * *` with actions `fetch -> summarize -> publish -> podcast`
+### Config schema reference
 
-Schema:
+Top-level keys:
+
+- `[global]`: defaults merged into every unit.
+- `[[unit]]`: one scheduled run definition per block.
+
+Supported keys:
 
 ```toml
 [global]
-# optional default mode when a unit omits `mode`
-mode = "hourly"
-# default ordered action pipeline for units
-actions = ["fetch", "summarize", "publish"]
+mode = "hourly"                      # default mode when unit omits mode
+actions = ["fetch", "summarize"]    # default action list (unit appends)
 
-[global.env]
-# merged into process environment
+[global.env]                          # exported as plain env vars
 MINERVA_LOG_LEVEL = "INFO"
 
-[global.paths]
-# shared paths (unit values override these)
+[global.paths]                        # mapped to MINERVA_* path env vars
+data_dir = "/data"
+state_dir = "/data/state"
 prompts_dir = "/data/prompts"
-# optional: defaults now resolve under /data/state/units/<unit-name>/
-# unit_state_dir = "/data/state/units/hourly"
-run_cache_file = "/data/state/hourly-run-marker.txt"
+unit_state_dir = "/data/state/units/default"
+run_cache_file = "/data/state/marker.txt"
+summary_file = "/data/state/summary.txt"
 
-[global.options]
-# maps to MINERVA_* option env vars
+[global.options]                      # mapped to MINERVA_* option env vars
 fetch_args = "--summary-group work"
 summary_args = "--provider openrouter"
+daily_podcast_args = "--post-to-telegram"
 
-[global.providers]
-# exported as MINERVA_PROVIDER_<NAME>
+[global.providers]                    # exported as MINERVA_PROVIDER_<NAME>
 llm = "openrouter"
 
-[global.tokens]
-# exported as MINERVA_TOKEN_<NAME>
+[global.tokens]                       # exported as MINERVA_TOKEN_<NAME>
 openrouter = "${OPENROUTER_API_KEY}"
 
-[global.action.fetch]
-# optional per-action args merged with unit action args
+[global.action.fetch]                 # per-action args (merged global + unit)
 args = ["--collection", "sessions"]
 
 [[unit]]
-name = "hourly"
-schedule = "0 * * * *"
+name = "hourly"                      # unique unit name
+schedule = "0 * * * *"               # 5-field cron expression
 enabled = true
 mode = "hourly"
+actions = ["publish"]                # appended to global actions
+
+  [unit.env]
+  CUSTOM_TAG = "hourly"
+
+  [unit.paths]
+  summary_file = "/data/state/hourly-summary.txt"
 
   [unit.options]
   hourly_fetch_args = "--skip-if-run"
 
+  [unit.action.publish]
+  args = ["--telegram-caption", "Hourly update"]
+```
+
+Actions execute in order. Built-in actions are `fetch`, `summarize`, `publish`, and
+`podcast`. If a required artifact is missing (for example, summary without todo dump),
+Minerva skips that action and downstream actions for that unit run.
+
+### Global defaults vs unit overrides
+
+Merge order is deterministic:
+
+1. Built-in defaults
+2. `[global]`
+3. `[[unit]]`
+4. environment overrides
+5. CLI overrides
+
+Behavior by value type:
+
+- Scalars (`mode`, individual paths/options/env values): unit overrides global.
+- Lists (`actions`, action `args`): appended in order `global + unit`.
+- Maps (`tokens`, `providers`, nested tables): merged per key, unit wins on conflicts.
+
+Example:
+
+```toml
+[global]
+actions = ["fetch", "summarize"]
+
+[global.action.summarize]
+args = ["--provider", "openrouter"]
+
 [[unit]]
 name = "daily"
 schedule = "0 6 * * *"
-enabled = true
-mode = "daily"
-actions = ["fetch", "summarize", "publish", "podcast"]
+actions = ["publish", "podcast"]
 
-  [unit.paths]
-  summary_file = "/data/state/daily-summary.txt"
-
-  [unit.action.publish]
-  args = ["--telegram-caption", "Daily digest"]
+  [unit.action.summarize]
+  args = ["--model", "meta-llama/llama-3.3-70b-instruct"]
 ```
 
-The entrypoint generates one cron line per enabled unit and executes:
+Resolved `daily` action chain becomes:
+`fetch -> summarize -> publish -> podcast`, and summarize args become:
+`--provider openrouter --model meta-llama/llama-3.3-70b-instruct`.
+
+### Run a custom plan in Docker
+
+A ready-to-edit example is included at:
+`docker/examples/minerva-run-plan.toml`.
+
+Mount your plan and run Minerva with it:
 
 ```bash
-/usr/local/bin/minerva-run unit <unit-name> --plan <plan-file>
+docker run --rm \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+  -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
+  -v "$PWD/docker/examples/minerva-run-plan.toml:/data/minerva-run-plan.toml:ro" \
+  -v "$PWD/docker/prompts:/data/prompts:ro" \
+  ghcr.io/<org>/minerva:latest
 ```
 
-You can inspect and validate the run plan directly from the CLI:
+Or choose any in-container path:
+
+```bash
+docker run --rm \
+  -e MINERVA_RUN_PLAN_FILE=/config/custom-plan.toml \
+  -v "$PWD/my-plan.toml:/config/custom-plan.toml:ro" \
+  ghcr.io/<org>/minerva:latest
+```
+
+You can inspect and validate before scheduling:
 
 ```bash
 minerva-run list-units --plan /data/minerva-run-plan.toml
 minerva-run validate --plan /data/minerva-run-plan.toml
 ```
 
-`minerva-run hourly` and `minerva-run daily` are still accepted for backward
-compatibility and are mapped to `unit hourly` / `unit daily`.
+`minerva-run hourly` and `minerva-run daily` remain backward compatible aliases
+for `minerva-run unit hourly` / `minerva-run unit daily`.
 
+### Migration guide: legacy env vars -> plan keys
 
-Actions are executed in order. Built-in action names are `fetch`, `summarize`, `publish`, and `podcast`.
-If a required artifact is missing (for example summary without todo dump), Minerva skips that action and all downstream actions for that unit run.
+Use this mapping when migrating existing Docker setups:
 
-### Per-unit state directory defaults and migration
+| Legacy env var | New run-plan key |
+|---|---|
+| `MINERVA_DATA_DIR` | `[global.paths].data_dir` |
+| `MINERVA_STATE_DIR` | `[global.paths].state_dir` |
+| `MINERVA_UNIT_STATE_DIR` | `[global.paths].unit_state_dir` (or `[unit.paths]`) |
+| `MINERVA_PROMPTS_DIR` | `[global.paths].prompts_dir` |
+| `MINERVA_RUN_CACHE_FILE` | `[global.paths].run_cache_file` |
+| `MINERVA_TODO_DUMP_FILE` | `[global.paths].todo_dump_file` |
+| `MINERVA_SUMMARY_FILE` | `[global.paths].summary_file` |
+| `MINERVA_SPEECH_FILE` | `[global.paths].speech_file` |
+| `MINERVA_PODCAST_TEXT_FILE` | `[global.paths].podcast_text_file` |
+| `MINERVA_PODCAST_AUDIO_FILE` | `[global.paths].podcast_audio_file` |
+| `MINERVA_PODCAST_TOPIC_FILE` | `[global.paths].podcast_topic_file` |
+| `MINERVA_CONFIG_PATH` | `[global.paths].config_path` |
+| `MINERVA_FETCH_ARGS` | `[global.options].fetch_args` |
+| `MINERVA_SUMMARY_ARGS` | `[global.options].summary_args` |
+| `MINERVA_PUBLISH_ARGS` | `[global.options].publish_args` |
+| `MINERVA_SHARED_ARGS` | `[global.options].shared_args` |
+| `MINERVA_PODCAST_ARGS` | `[global.options].podcast_args` |
+| `MINERVA_PODCAST_TELEGRAM_ARGS` | `[global.options].podcast_telegram_args` |
+| `MINERVA_PODCAST_LANGUAGE` | `[global.options].podcast_language` |
+| `MINERVA_HOURLY_FETCH_ARGS` | `[unit.options].hourly_fetch_args` (typically `name = "hourly"`) |
+| `MINERVA_HOURLY_SUMMARY_ARGS` | `[unit.options].hourly_summary_args` |
+| `MINERVA_HOURLY_PUBLISH_ARGS` | `[unit.options].hourly_publish_args` |
+| `MINERVA_DAILY_FETCH_ARGS` | `[unit.options].daily_fetch_args` (typically `name = "daily"`) |
+| `MINERVA_DAILY_SUMMARY_ARGS` | `[unit.options].daily_summary_args` |
+| `MINERVA_DAILY_PUBLISH_ARGS` | `[unit.options].daily_publish_args` |
+| `MINERVA_DAILY_PODCAST_ARGS` | `[unit.options].daily_podcast_args` |
 
-By default, each unit now writes runtime artifacts under:
+### Secret handling recommendations
 
-- `${MINERVA_STATE_DIR}/units/<unit-name>/`
-
-This means the default files are now resolved as:
-
-- `todo_dump.json`
-- `todo_summary.txt`
-- `todo-summary.wav`
-- `summary_run_marker.txt`
-- `random_podcast_topics.txt`
-
-inside the selected unit directory.
-
-This behavior keeps units isolated and avoids collisions between hourly/daily runs.
-
-Migration notes:
-
-- Existing setups that relied on shared single paths can keep the old behavior by setting explicit path overrides (for example `MINERVA_TODO_DUMP_FILE`, `MINERVA_SUMMARY_FILE`, `MINERVA_RUN_CACHE_FILE`, `MINERVA_SPEECH_FILE`, and `MINERVA_PODCAST_TOPIC_FILE`).
-- You can also set `unit_state_dir` in `[global.paths]` or `[unit.paths]` to choose a custom base directory per unit.
-- Minerva creates the unit directory (and any parent directories for overridden artifact paths) before actions execute.
-
-Configuration is merged in this deterministic order:
-
-1. built-in defaults
-2. `[global]`
-3. `[[unit]]`
-4. environment overrides (if set)
-5. CLI overrides
+- Put **non-secret runtime settings** in the run plan (schedules, actions, file paths,
+  model/provider selection, prompt arguments).
+- Keep **secrets in environment variables** (for example `OPENROUTER_API_KEY`,
+  `GROQ_API_KEY`, `FAL_KEY`, `TELEGRAM_BOT_TOKEN`) and reference them from plan
+  tokens/secrets if needed (`"${OPENROUTER_API_KEY}"`).
+- Mount plan files as read-only volumes and keep them in version control only when they
+  contain no sensitive material.
+- Prefer platform secret stores (Docker/Kubernetes/CI secret managers) for tokens,
+  then inject them into the container environment at runtime.
 
 ## Generate a random podcast episode
 
