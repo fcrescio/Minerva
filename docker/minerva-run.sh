@@ -6,6 +6,7 @@ set -euo pipefail
 #   MINERVA_LOG_PATH              File to tee script output to.
 #   MINERVA_DATA_DIR              Root data directory (defaults to /data).
 #   MINERVA_STATE_DIR             Directory to store generated state.
+#   MINERVA_UNIT_STATE_DIR        Directory to store state for the selected unit.
 #   MINERVA_PROMPTS_DIR           Directory containing prompt templates.
 #   MINERVA_CONFIG_PATH           Explicit path to google-services.json.
 #   MINERVA_RUN_PLAN_FILE         Run-plan file path (defaults to /data/minerva-run-plan.toml).
@@ -203,6 +204,7 @@ if selected is None:
 paths_map = {
     "data_dir": "MINERVA_DATA_DIR",
     "state_dir": "MINERVA_STATE_DIR",
+    "unit_state_dir": "MINERVA_UNIT_STATE_DIR",
     "prompts_dir": "MINERVA_PROMPTS_DIR",
     "run_cache_file": "MINERVA_RUN_CACHE_FILE",
     "todo_dump_file": "MINERVA_TODO_DUMP_FILE",
@@ -427,17 +429,19 @@ esac
 MODE="${MINERVA_SELECTED_MODE:-$UNIT_NAME}"
 DATA_DIR="${MINERVA_DATA_DIR:-/data}"
 STATE_DIR="${MINERVA_STATE_DIR:-$DATA_DIR/state}"
+UNIT_STATE_DIR="${MINERVA_UNIT_STATE_DIR:-$STATE_DIR/units/${MINERVA_SELECTED_UNIT:-$UNIT_NAME}}"
 PROMPTS_DIR="${MINERVA_PROMPTS_DIR:-$DATA_DIR/prompts}"
-RUN_CACHE_FILE="${MINERVA_RUN_CACHE_FILE:-$STATE_DIR/summary_run_marker.txt}"
-TODO_DUMP_FILE="${MINERVA_TODO_DUMP_FILE:-$STATE_DIR/todo_dump.json}"
-SUMMARY_FILE="${MINERVA_SUMMARY_FILE:-$STATE_DIR/todo_summary.txt}"
-SPEECH_FILE="${MINERVA_SPEECH_FILE:-$STATE_DIR/todo-summary.wav}"
-PODCAST_TEXT_FILE="${MINERVA_PODCAST_TEXT_FILE:-$STATE_DIR/random_podcast.txt}"
-PODCAST_AUDIO_FILE="${MINERVA_PODCAST_AUDIO_FILE:-$STATE_DIR/random-podcast.wav}"
-PODCAST_TOPIC_FILE="${MINERVA_PODCAST_TOPIC_FILE:-$STATE_DIR/random_podcast_topics.txt}"
+RUN_CACHE_FILE="${MINERVA_RUN_CACHE_FILE:-$UNIT_STATE_DIR/summary_run_marker.txt}"
+TODO_DUMP_FILE="${MINERVA_TODO_DUMP_FILE:-$UNIT_STATE_DIR/todo_dump.json}"
+SUMMARY_FILE="${MINERVA_SUMMARY_FILE:-$UNIT_STATE_DIR/todo_summary.txt}"
+SPEECH_FILE="${MINERVA_SPEECH_FILE:-$UNIT_STATE_DIR/todo-summary.wav}"
+PODCAST_TEXT_FILE="${MINERVA_PODCAST_TEXT_FILE:-$UNIT_STATE_DIR/random_podcast.txt}"
+PODCAST_AUDIO_FILE="${MINERVA_PODCAST_AUDIO_FILE:-$UNIT_STATE_DIR/random-podcast.wav}"
+PODCAST_TOPIC_FILE="${MINERVA_PODCAST_TOPIC_FILE:-$UNIT_STATE_DIR/random_podcast_topics.txt}"
 PODCAST_PROMPT_TEMPLATE_FILE="${MINERVA_PODCAST_PROMPT_TEMPLATE_FILE:-}"
 
 mkdir -p "$STATE_DIR"
+mkdir -p "$UNIT_STATE_DIR"
 mkdir -p   "$(dirname "$RUN_CACHE_FILE")"   "$(dirname "$TODO_DUMP_FILE")"   "$(dirname "$SUMMARY_FILE")"   "$(dirname "$SPEECH_FILE")"   "$(dirname "$PODCAST_TEXT_FILE")"   "$(dirname "$PODCAST_AUDIO_FILE")"   "$(dirname "$PODCAST_TOPIC_FILE")"
 
 CONFIG_PATH="${MINERVA_CONFIG_PATH:-}"

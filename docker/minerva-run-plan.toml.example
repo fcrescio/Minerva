@@ -7,6 +7,8 @@ MINERVA_LOG_LEVEL = "INFO"
 
 [global.paths]
 prompts_dir = "/data/prompts"
+# Optional override for per-unit state root (defaults to /data/state/units/<unit-name>)
+# unit_state_dir = "/data/state/units/hourly"
 
 [global.options]
 summary_args = "--provider openrouter"
