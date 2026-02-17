@@ -8,6 +8,37 @@ from minerva.runplan import RunPlan, RunPlanValidationError, render_cron
 
 
 class RunPlanTests(unittest.TestCase):
+
+    def test_from_toml_parses_valid_document(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = Path(tmpdir) / "plan.toml"
+            plan_path.write_text(
+                """
+[global]
+mode = "hourly"
+
+[[unit]]
+name = "u"
+schedule = "0 * * * *"
+actions = ["fetch"]
+""".strip(),
+                encoding="utf-8",
+            )
+
+            plan = RunPlan.from_toml(plan_path)
+
+        self.assertEqual(plan.global_config.mode, "hourly")
+        self.assertEqual(len(plan.units), 1)
+        self.assertEqual(plan.units[0].name, "u")
+
+    def test_from_toml_invalid_document_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = Path(tmpdir) / "bad.toml"
+            plan_path.write_text("[[unit]\nname='oops'", encoding="utf-8")
+
+            with self.assertRaises(Exception):
+                RunPlan.from_toml(plan_path)
+
     def test_merge_semantics_scalars_lists_and_tokens(self) -> None:
         plan = RunPlan.from_mapping(
             {
