@@ -112,8 +112,8 @@ By default it reads `/data/minerva-run-plan.toml`; override this with
 If the file is missing, Minerva uses an in-memory default that preserves the
 previous behaviour:
 
-- `hourly` unit on `0 * * * *`
-- `daily` unit on `0 6 * * *`
+- `hourly` unit on `0 * * * *` with actions `fetch -> summarize -> publish`
+- `daily` unit on `0 6 * * *` with actions `fetch -> summarize -> publish -> podcast`
 
 Schema:
 
@@ -121,6 +121,8 @@ Schema:
 [global]
 # optional default mode when a unit omits `mode`
 mode = "hourly"
+# default ordered action pipeline for units
+actions = ["fetch", "summarize", "publish"]
 
 [global.env]
 # merged into process environment
@@ -144,6 +146,10 @@ llm = "openrouter"
 # exported as MINERVA_TOKEN_<NAME>
 openrouter = "${OPENROUTER_API_KEY}"
 
+[global.action.fetch]
+# optional per-action args merged with unit action args
+args = ["--collection", "sessions"]
+
 [[unit]]
 name = "hourly"
 schedule = "0 * * * *"
@@ -158,9 +164,13 @@ name = "daily"
 schedule = "0 6 * * *"
 enabled = true
 mode = "daily"
+actions = ["fetch", "summarize", "publish", "podcast"]
 
   [unit.paths]
   summary_file = "/data/state/daily-summary.txt"
+
+  [unit.action.publish]
+  args = ["--telegram-caption", "Daily digest"]
 ```
 
 The entrypoint generates one cron line per enabled unit and executes:
@@ -178,6 +188,10 @@ minerva-run validate --plan /data/minerva-run-plan.toml
 
 `minerva-run hourly` and `minerva-run daily` are still accepted for backward
 compatibility and are mapped to `unit hourly` / `unit daily`.
+
+
+Actions are executed in order. Built-in action names are `fetch`, `summarize`, `publish`, and `podcast`.
+If a required artifact is missing (for example summary without todo dump), Minerva skips that action and all downstream actions for that unit run.
 
 Configuration is merged in this deterministic order:
 

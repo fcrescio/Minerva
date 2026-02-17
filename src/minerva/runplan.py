@@ -51,6 +51,7 @@ class GlobalConfig:
     actions: list[str] = field(default_factory=list)
     tokens: dict[str, str] = field(default_factory=dict)
     secrets: dict[str, str] = field(default_factory=dict)
+    action_args: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class UnitConfig:
     actions: list[str] = field(default_factory=list)
     tokens: dict[str, str] = field(default_factory=dict)
     secrets: dict[str, str] = field(default_factory=dict)
+    action_args: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,7 @@ class RunPlan:
         actions = [*self.global_config.actions, *unit.actions]
         tokens = {**self.global_config.tokens, **unit.tokens}
         secrets = {**self.global_config.secrets, **unit.secrets}
+        action_args = _merge_action_args(self.global_config.action_args, unit.action_args)
 
         return UnitConfig(
             name=unit.name,
@@ -115,6 +118,7 @@ class RunPlan:
             actions=actions,
             tokens=tokens,
             secrets=secrets,
+            action_args=action_args,
         )
 
     def validate(self) -> None:
@@ -172,6 +176,7 @@ def _build_global_config(raw: Mapping[str, Any]) -> GlobalConfig:
         actions=_as_string_list(raw.get("actions")),
         tokens=_as_string_map(raw.get("tokens")),
         secrets=_as_string_map(raw.get("secrets")),
+        action_args=_as_action_args_map(raw.get("action")),
     )
 
 
@@ -185,7 +190,34 @@ def _build_unit_config(raw: Mapping[str, Any]) -> UnitConfig:
         actions=_as_string_list(raw.get("actions")),
         tokens=_as_string_map(raw.get("tokens")),
         secrets=_as_string_map(raw.get("secrets")),
+        action_args=_as_action_args_map(raw.get("action")),
     )
+
+
+def _as_action_args_map(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, Mapping):
+        return {}
+
+    result: dict[str, list[str]] = {}
+    for key, item in value.items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        if isinstance(item, Mapping):
+            result[normalized_key] = _as_string_list(item.get("args"))
+    return result
+
+
+def _merge_action_args(
+    global_args: Mapping[str, list[str]], unit_args: Mapping[str, list[str]]
+) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {
+        key: [*values]
+        for key, values in global_args.items()
+    }
+    for key, values in unit_args.items():
+        merged[key] = [*merged.get(key, []), *values]
+    return merged
 
 
 def _as_optional_str(value: Any) -> str | None:

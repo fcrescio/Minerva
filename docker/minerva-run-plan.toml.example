@@ -1,5 +1,6 @@
 [global]
 mode = "hourly"
+actions = ["fetch", "summarize", "publish"]
 
 [global.env]
 MINERVA_LOG_LEVEL = "INFO"
@@ -9,6 +10,12 @@ prompts_dir = "/data/prompts"
 
 [global.options]
 summary_args = "--provider openrouter"
+
+[global.action.fetch]
+args = ["--collection", "sessions"]
+
+[global.action.publish]
+args = ["--telegram-caption", "Minerva summary"]
 
 [[unit]]
 name = "hourly"
@@ -21,3 +28,7 @@ name = "daily"
 schedule = "0 6 * * *"
 enabled = true
 mode = "daily"
+actions = ["podcast"]
+
+[unit.action.podcast]
+args = ["--post-to-telegram"]
