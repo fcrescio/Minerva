@@ -32,7 +32,10 @@ set -euo pipefail
 #   MINERVA_PODCAST_TOPIC_FILE    Override the default podcast topic history file.
 #   MINERVA_PODCAST_LANGUAGE      Language to request for the generated podcast script.
 
-source /etc/container.env
+if [[ -f /etc/container.env ]]; then
+  # shellcheck disable=SC1091
+  source /etc/container.env
+fi
 
 INITIAL_SUBCOMMAND="${1:-}"
 if [[ "$INITIAL_SUBCOMMAND" == "unit" || "$INITIAL_SUBCOMMAND" == "hourly" || "$INITIAL_SUBCOMMAND" == "daily" ]]; then
