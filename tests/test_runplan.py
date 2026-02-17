@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from minerva.runplan import RunPlan, RunPlanValidationError
+from minerva.runplan import RunPlan, RunPlanValidationError, render_cron
 
 
 class RunPlanTests(unittest.TestCase):
@@ -102,6 +104,30 @@ class RunPlanTests(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("key='schedule'", message)
         self.assertIn("key='actions'", message)
+
+    def test_render_cron_quotes_values_and_adds_unit_comment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = Path(tmpdir) / "plan with spaces.toml"
+            plan_path.write_text(
+                """
+[[unit]]
+name = "team alpha"
+schedule = "*/5 * * * *"
+actions = ["fetch"]
+""".strip()
+            )
+
+            cron = render_cron(plan_path, system_cron=True)
+
+        self.assertIn("# unit: team alpha", cron)
+        self.assertIn("minerva-run unit 'team alpha' --plan ", cron)
+        self.assertIn("plan with spaces.toml'", cron)
+        self.assertIn("*/5 * * * * root", cron)
+
+    def test_render_cron_user_crontab_omits_root(self) -> None:
+        cron = render_cron("/tmp/plan.toml", system_cron=False)
+        self.assertIn("0 * * * * /usr/local/bin/minerva-run unit hourly --plan /tmp/plan.toml", cron)
+        self.assertNotIn(" root /usr/local/bin/minerva-run", cron)
 
 
 if __name__ == "__main__":

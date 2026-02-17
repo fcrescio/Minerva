@@ -34,12 +34,15 @@ set -euo pipefail
 
 source /etc/container.env
 
-if [[ -n "${MINERVA_LOG_PATH:-}" ]]; then
-  exec >>"$MINERVA_LOG_PATH" 2>&1
-elif [[ -e /proc/1/fd/1 && -w /proc/1/fd/1 ]]; then
-  exec >>/proc/1/fd/1 2>&1
-else
-  exec >>/dev/stdout 2>&1
+INITIAL_SUBCOMMAND="${1:-}"
+if [[ "$INITIAL_SUBCOMMAND" == "unit" || "$INITIAL_SUBCOMMAND" == "hourly" || "$INITIAL_SUBCOMMAND" == "daily" ]]; then
+  if [[ -n "${MINERVA_LOG_PATH:-}" ]]; then
+    exec >>"$MINERVA_LOG_PATH" 2>&1
+  elif [[ -e /proc/1/fd/1 && -w /proc/1/fd/1 ]]; then
+    exec >>/proc/1/fd/1 2>&1
+  else
+    exec >>/dev/stdout 2>&1
+  fi
 fi
 
 log() {
@@ -57,6 +60,7 @@ Usage:
   minerva-run unit <name> [--plan <path>] [-- <summary args...>]
   minerva-run list-units [--plan <path>]
   minerva-run validate [--plan <path>]
+  minerva-run render-cron [--system-cron] [--plan <path>]
 
 Legacy compatibility:
   minerva-run hourly [--plan <path>] [-- <summary args...>]
@@ -81,48 +85,14 @@ run_plan_command() {
   python3 - "$command" "$plan_file" "$unit_name" <<'PY'
 from __future__ import annotations
 
-import os
 import re
 import shlex
 import sys
-import tomllib
+from minerva.runplan import RunPlanValidationError, default_plan, load_run_plan, render_cron
 
 command = sys.argv[1]
 plan_file = sys.argv[2]
 unit_name = sys.argv[3]
-
-
-def default_plan() -> dict[str, object]:
-    return {
-        "global": {},
-        "unit": [
-            {"name": "hourly", "schedule": "0 * * * *", "enabled": True, "mode": "hourly", "actions": ["fetch", "summarize", "publish"]},
-            {"name": "daily", "schedule": "0 6 * * *", "enabled": True, "mode": "daily", "actions": ["fetch", "summarize", "publish", "podcast"]},
-        ],
-    }
-
-
-if os.path.exists(plan_file):
-    with open(plan_file, "rb") as handle:
-        plan = tomllib.load(handle)
-else:
-    plan = default_plan()
-
-if not isinstance(plan, dict):
-    if command == "load-unit":
-        print("echo 'Invalid run plan format' >&2")
-        print("exit 2")
-    else:
-        print("Invalid run plan format", file=sys.stderr)
-    raise SystemExit(2)
-
-global_cfg = plan.get("global", {})
-if not isinstance(global_cfg, dict):
-    global_cfg = {}
-
-units = plan.get("unit", [])
-if not isinstance(units, list):
-    units = []
 
 
 def table(cfg: dict[str, object], key: str) -> dict[str, object]:
@@ -140,52 +110,46 @@ def sanitize_key(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_").upper()
 
 
-def get_selected_unit() -> dict[str, object] | None:
-    for unit in units:
-        if isinstance(unit, dict) and str(unit.get("name", "")).strip() == unit_name:
+def exit_validation_error(exc: RunPlanValidationError) -> None:
+    print(f"Run plan validation failed for {plan_file}", file=sys.stderr)
+    for issue in exc.issues:
+        print(f" - {issue}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+try:
+    plan = load_run_plan(plan_file)
+except RunPlanValidationError as exc:
+    if command == "load-unit":
+        print(f"echo {shlex.quote('Run plan validation failed')} >&2")
+        for issue in exc.issues:
+            print(f"echo {shlex.quote(f' - {issue}')} >&2")
+        print("exit 2")
+        raise SystemExit
+    exit_validation_error(exc)
+
+if command == "render-cron":
+    system_cron = unit_name.lower() == "true"
+    print(render_cron(plan_file, system_cron=system_cron))
+    raise SystemExit(0)
+
+
+def get_selected_unit() -> object:
+    for unit in plan.units:
+        if unit.name == unit_name:
             return unit
     return None
 
 
 def list_units() -> int:
-    print("name\tschedule\tenabled\tmode")
-    for unit in units:
-        if not isinstance(unit, dict):
-            continue
-        name = str(unit.get("name", "")).strip()
-        schedule = str(unit.get("schedule", "")).strip()
-        enabled = unit.get("enabled", True)
-        mode = unit.get("mode") or name
-        if not name:
-            continue
-        print(f"{name}\t{schedule}\t{enabled}\t{mode}")
+    print("name	schedule	enabled	mode")
+    for unit in plan.units:
+        mode = unit.mode or plan.global_config.mode or unit.name
+        print(f"{unit.name}	{unit.schedule}	{unit.enabled}	{mode}")
     return 0
 
 
 def validate_units() -> int:
-    errors: list[str] = []
-    seen: set[str] = set()
-    for idx, unit in enumerate(units):
-        if not isinstance(unit, dict):
-            errors.append(f"unit[{idx}] must be a table")
-            continue
-        name = str(unit.get("name", "")).strip()
-        schedule = str(unit.get("schedule", "")).strip()
-        if not name:
-            errors.append(f"unit[{idx}] is missing a non-empty name")
-        elif name in seen:
-            errors.append(f"duplicate unit name: {name}")
-        else:
-            seen.add(name)
-
-        if unit.get("enabled", True) and not schedule:
-            errors.append(f"unit[{idx}] ({name or 'unnamed'}) is enabled but has no schedule")
-
-    if errors:
-        for error in errors:
-            print(error, file=sys.stderr)
-        return 2
-
     print("Run plan is valid")
     return 0
 
@@ -235,21 +199,46 @@ options_map = {
     "podcast_language": "MINERVA_PODCAST_LANGUAGE",
 }
 
-merged_env = merge_dicts(table(global_cfg, "env"), table(selected, "env"))
-merged_paths = merge_dicts(table(global_cfg, "paths"), table(selected, "paths"))
-merged_options = merge_dicts(table(global_cfg, "options"), table(selected, "options"))
-merged_providers = merge_dicts(table(global_cfg, "providers"), table(selected, "providers"))
-merged_tokens = merge_dicts(table(global_cfg, "tokens"), table(selected, "tokens"))
+raw = default_plan()
+try:
+    import os
+    import tomllib
+    if os.path.exists(plan_file):
+        with open(plan_file, "rb") as handle:
+            parsed = tomllib.load(handle)
+            if isinstance(parsed, dict):
+                raw = parsed
+except Exception:
+    pass
+
+global_cfg = raw.get("global", {}) if isinstance(raw, dict) else {}
+if not isinstance(global_cfg, dict):
+    global_cfg = {}
+selected_raw = {}
+if isinstance(raw, dict):
+    units_raw = raw.get("unit", [])
+    if isinstance(units_raw, list):
+        for item in units_raw:
+            if isinstance(item, dict) and str(item.get("name", "")).strip() == unit_name:
+                selected_raw = item
+                break
+
+merged = plan.merged_unit(selected)
+merged_env = merge_dicts(table(global_cfg, "env"), table(selected_raw, "env"))
+merged_paths = merge_dicts(table(global_cfg, "paths"), table(selected_raw, "paths"))
+merged_options = merge_dicts(table(global_cfg, "options"), table(selected_raw, "options"))
+merged_providers = merge_dicts(table(global_cfg, "providers"), table(selected_raw, "providers"))
+merged_tokens = merge_dicts(table(global_cfg, "tokens"), table(selected_raw, "tokens"))
 merged_global_actions = table(global_cfg, "action")
-merged_unit_actions = table(selected, "action")
+merged_unit_actions = table(selected_raw, "action")
 
 def merge_action_tables(a: dict[str, object], b: dict[str, object]) -> dict[str, object]:
-    merged = dict(a)
+    merged_table = dict(a)
     for key, value in b.items():
         key_text = str(key).strip()
         if not key_text:
             continue
-        global_entry = merged.get(key_text, {})
+        global_entry = merged_table.get(key_text, {})
         global_args = []
         if isinstance(global_entry, dict):
             global_raw = global_entry.get("args", [])
@@ -260,15 +249,15 @@ def merge_action_tables(a: dict[str, object], b: dict[str, object]) -> dict[str,
             unit_raw = value.get("args", [])
             if isinstance(unit_raw, list):
                 unit_args = [str(item).strip() for item in unit_raw if str(item).strip()]
-        merged[key_text] = {"args": [*global_args, *unit_args]}
-    return merged
+        merged_table[key_text] = {"args": [*global_args, *unit_args]}
+    return merged_table
 
 merged_action_cfg = merge_action_tables(merged_global_actions, merged_unit_actions)
 
 if "config_path" in merged_options:
     merged_paths["config_path"] = merged_options.pop("config_path")
 
-mode = selected.get("mode") or global_cfg.get("mode") or selected.get("name")
+mode = merged.mode or merged.name
 
 
 def emit(name: str, value: object) -> None:
@@ -296,12 +285,7 @@ for key, value in merged_providers.items():
 for key, value in merged_tokens.items():
     emit(f"MINERVA_TOKEN_{sanitize_key(str(key))}", value)
 
-actions = selected.get("actions")
-if not isinstance(actions, list):
-    actions = []
-global_actions = global_cfg.get("actions")
-if isinstance(global_actions, list):
-    actions = [*global_actions, *actions]
+actions = merged.actions
 if not actions:
     if str(mode) == "daily":
         actions = ["fetch", "summarize", "publish", "podcast"]
@@ -381,6 +365,32 @@ case "$SUBCOMMAND" in
       esac
     done
     run_plan_command "validate" "$PLAN_FILE"
+    exit $?
+    ;;
+  render-cron)
+    SYSTEM_CRON="false"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --plan)
+          if [[ $# -lt 2 ]]; then
+            log "Missing value for --plan"
+            exit 2
+          fi
+          PLAN_FILE="$2"
+          shift 2
+          ;;
+        --system-cron)
+          SYSTEM_CRON="true"
+          shift
+          ;;
+        *)
+          log "Unknown argument for render-cron: $1"
+          usage
+          exit 2
+          ;;
+      esac
+    done
+    run_plan_command "render-cron" "$PLAN_FILE" "$SYSTEM_CRON"
     exit $?
     ;;
   unit)

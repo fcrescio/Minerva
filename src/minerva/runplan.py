@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
+import shlex
 import tomllib
 from typing import Any, Mapping
 
@@ -167,6 +168,73 @@ class RunPlan:
 
         if issues:
             raise RunPlanValidationError(issues)
+
+
+def default_plan() -> dict[str, object]:
+    """Return the built-in run plan used when no plan file exists."""
+
+    return {
+        "global": {},
+        "unit": [
+            {
+                "name": "hourly",
+                "schedule": "0 * * * *",
+                "enabled": True,
+                "mode": "hourly",
+                "actions": ["fetch", "summarize", "publish"],
+            },
+            {
+                "name": "daily",
+                "schedule": "0 6 * * *",
+                "enabled": True,
+                "mode": "daily",
+                "actions": ["fetch", "summarize", "publish", "podcast"],
+            },
+        ],
+    }
+
+
+def load_run_plan(path: str | Path) -> RunPlan:
+    """Load and validate a run plan from TOML, or use the built-in default."""
+
+    plan_path = Path(path)
+    if plan_path.exists():
+        return RunPlan.from_toml(plan_path)
+    return RunPlan.from_mapping(default_plan(), file_path=str(plan_path))
+
+
+def render_cron(plan_path: str | Path, *, system_cron: bool) -> str:
+    """Render cron file contents for a validated run plan."""
+
+    plan = load_run_plan(plan_path)
+    lines = [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "SHELL=/bin/bash",
+        "",
+        "# Redirect job output to the container log stream.",
+    ]
+
+    enabled_count = 0
+    plan_path_text = str(plan_path)
+    for unit in plan.units:
+        if not unit.enabled:
+            continue
+
+        command = (
+            f"/usr/local/bin/minerva-run unit {shlex.quote(unit.name)} "
+            f"--plan {shlex.quote(plan_path_text)} >> /proc/1/fd/1 2>&1"
+        )
+        lines.append(f"# unit: {unit.name}")
+        if system_cron:
+            lines.append(f"{unit.schedule} root {command}")
+        else:
+            lines.append(f"{unit.schedule} {command}")
+        enabled_count += 1
+
+    if enabled_count == 0:
+        lines.append("# No enabled units found in run plan.")
+
+    return "\n".join(lines)
 
 
 def _build_global_config(raw: Mapping[str, Any]) -> GlobalConfig:
