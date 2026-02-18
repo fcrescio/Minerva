@@ -305,7 +305,8 @@ append_sources_from_spec() {
 
 build_action_args() {
   local _action="$1"
-  local -n _target=$2
+  local _target_name=$2
+  local -n _target="$_target_name"
   local _base_ref="${ACTION_BASE_REFS[$_action]}"
   local _mode_ref="${ACTION_MODE_REFS[$_action]}"
   local -n _base="$_base_ref"
@@ -313,8 +314,8 @@ build_action_args() {
 
   _target=("${_base[@]}")
   _target+=("${_mode[@]}")
-  append_sources_from_spec _target "${ACTION_GLOBAL_ENV_SOURCES[$_action]}"
-  append_sources_from_spec _target "${ACTION_OVERRIDE_ENV_SOURCES[$_action]}"
+  append_sources_from_spec "$_target_name" "${ACTION_GLOBAL_ENV_SOURCES[$_action]}"
+  append_sources_from_spec "$_target_name" "${ACTION_OVERRIDE_ENV_SOURCES[$_action]}"
 }
 
 normalize_action_token() {
@@ -361,7 +362,11 @@ check_action_outputs() {
 
   for _output in ${ACTION_REQUIRED_OUTPUTS[$_action]}; do
     if [[ ! -f "$_output" ]]; then
-      log "$_action output not created at $_output; skipping downstream actions"
+      if [[ "$_action" == "fetch" ]]; then
+        log "fetch output not created at $_output; Todo dump not created; skipping downstream actions"
+      else
+        log "$_action output not created at $_output; skipping downstream actions"
+      fi
       return 1
     fi
   done

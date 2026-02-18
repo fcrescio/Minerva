@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,8 +28,8 @@ class TodoList:
 
     id: str
     display_title: str
-    data: dict[str, Any]
-    todos: list[Todo]
+    data: dict[str, Any] = field(default_factory=dict)
+    todos: list[Todo] = field(default_factory=list)
 
 
 def fetch_todo_lists(
