@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..logging_utils import configure_logging
-from ..pipeline import post_summary_to_telegram, post_text_to_telegram, synthesise_speech
+from ..media import synthesise_speech
+from ..notifications import post_summary_to_telegram, post_text_to_telegram
 
 logger = logging.getLogger(__name__)
 

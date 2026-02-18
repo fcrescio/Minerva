@@ -9,13 +9,9 @@ import sys
 from pathlib import Path
 
 from ..logging_utils import configure_logging
-from ..pipeline import (
-    DEFAULT_MODELS,
-    generate_random_podcast_script,
-    post_summary_to_telegram,
-    post_text_to_telegram,
-    synthesise_speech,
-)
+from ..llm import DEFAULT_MODELS, generate_random_podcast_script
+from ..media import synthesise_speech
+from ..notifications import post_summary_to_telegram, post_text_to_telegram
 
 logger = logging.getLogger(__name__)
 
