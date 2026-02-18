@@ -173,6 +173,27 @@ class MinervaRunCliTests(unittest.TestCase):
         self.assertIn("publish-summary|", calls)
         self.assertIn("--cli-override", calls)
 
+
+    def test_run_plan_accepts_summarise_action_alias(self) -> None:
+        plan = self.tmp_path / "alias-plan.toml"
+        plan.write_text(
+            textwrap.dedent(
+                """
+                [[unit]]
+                name = "alias"
+                schedule = "0 * * * *"
+                actions = ["fetch", "summarise", "publish"]
+                """
+            ).strip(),
+            encoding="utf-8",
+        )
+
+        result = self._run("unit", "alias", "--plan", str(plan))
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("summarize-todos|", calls)
+
     def test_default_plan_hourly_and_daily_regression(self) -> None:
         missing_plan = self.tmp_path / "does-not-exist.toml"
 
@@ -203,7 +224,7 @@ class MinervaRunCliTests(unittest.TestCase):
         result = self._run("unit", "skip", "--plan", str(plan), env={"MOCK_DISABLE_FETCH_OUTPUT": "1"})
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         run_log = self.run_log_file.read_text(encoding="utf-8")
-        self.assertIn("Todo dump not created; skipping downstream actions", run_log)
+        self.assertIn("fetch output not created", run_log)
         calls = self.log_file.read_text(encoding="utf-8")
         self.assertIn("fetch-todos|", calls)
         self.assertNotIn("summarize-todos|", calls)

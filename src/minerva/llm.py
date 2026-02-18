@@ -1,4 +1,4 @@
-"""LLM provider integrations for todo summarisation and podcast generation."""
+"""LLM provider integrations for todo summarization and podcast generation."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,7 @@ DEFAULT_MODELS = {
 }
 
 
-def summarise_with_openrouter(
+def summarize_with_openrouter(
     todos: Iterable[TodoList],
     *,
     model: str,
@@ -83,7 +83,7 @@ def summarise_with_openrouter(
         raise RuntimeError("Unexpected response from OpenRouter") from exc
 
 
-def summarise_with_groq(
+def summarize_with_groq(
     todos: Iterable[TodoList],
     *,
     model: str,
@@ -208,4 +208,11 @@ __all__ = [
     "generate_random_podcast_script",
     "summarise_with_groq",
     "summarise_with_openrouter",
+    "summarize_with_groq",
+    "summarize_with_openrouter",
 ]
+
+
+# Backward-compatible aliases.
+summarise_with_openrouter = summarize_with_openrouter
+summarise_with_groq = summarize_with_groq

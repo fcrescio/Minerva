@@ -44,14 +44,14 @@ class RunplanEnvTests(unittest.TestCase):
                 [global.options]
                 summary_args = "--global-summary"
 
-                [global.action.summarize]
+                [global.action.summarise]
                 args = ["--g"]
 
                 [[unit]]
                 name = "u"
                 schedule = "0 * * * *"
                 mode = "hourly"
-                actions = ["fetch"]
+                actions = ["fetch", "summarise"]
 
                 [unit.env]
                 only_unit = "b"
@@ -73,7 +73,7 @@ class RunplanEnvTests(unittest.TestCase):
         self.assertIn("apply_if_unset MINERVA_STATE_DIR /global/state", lines)
         self.assertIn("apply_if_unset MINERVA_SUMMARY_ARGS --unit-summary", lines)
         self.assertIn("apply_if_unset MINERVA_ACTION_SUMMARIZE_ARGS '--g --u'", lines)
-        self.assertIn("export MINERVA_SELECTED_ACTIONS=fetch", lines)
+        self.assertIn("export MINERVA_SELECTED_ACTIONS='fetch summarize'", lines)
         self.assertIn("export MINERVA_SELECTED_MODE=hourly", lines)
 
     def test_derive_unit_exports_missing_unit_raises_lookup_error(self) -> None:
@@ -98,7 +98,7 @@ class RunplanEnvTests(unittest.TestCase):
                 [[unit]]
                 name = "w"
                 schedule = "*/5 * * * *"
-                actions = ["fetch"]
+                actions = ["fetch", "summarise"]
                 """
             ).strip(),
             encoding="utf-8",

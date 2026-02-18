@@ -30,7 +30,11 @@ else:
 
 try:
     from minerva import pipeline
-    from minerva.llm import generate_random_podcast_script, summarise_with_openrouter
+    from minerva.llm import (
+        generate_random_podcast_script,
+        summarise_with_openrouter,
+        summarize_with_openrouter,
+    )
     from minerva.media import synthesise_speech
     from minerva.notifications import post_text_to_telegram
     from minerva.prompts import build_prompt, load_system_prompt
@@ -44,7 +48,8 @@ else:
 @unittest.skipIf(pipeline is None, f"Skipping compatibility import checks: {IMPORT_ERROR}")
 class PipelineCompatibilityFacadeTests(unittest.TestCase):
     def test_pipeline_re_exports_split_symbols(self) -> None:
-        self.assertIs(pipeline.summarise_with_openrouter, summarise_with_openrouter)
+        self.assertIs(pipeline.summarize_with_openrouter, summarize_with_openrouter)
+        self.assertIs(summarise_with_openrouter, summarize_with_openrouter)
         self.assertIs(pipeline.generate_random_podcast_script, generate_random_podcast_script)
         self.assertIs(pipeline.build_prompt, build_prompt)
         self.assertIs(pipeline.load_system_prompt, load_system_prompt)

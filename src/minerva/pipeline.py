@@ -3,8 +3,8 @@
 from .llm import (
     DEFAULT_MODELS,
     generate_random_podcast_script,
-    summarise_with_groq,
-    summarise_with_openrouter,
+    summarize_with_groq,
+    summarize_with_openrouter,
 )
 from .media import convert_audio_to_ogg_opus, extract_audio_urls, synthesise_speech
 from .notifications import post_summary_to_telegram, post_text_to_telegram
@@ -51,8 +51,8 @@ __all__ = [
     "render_podcast_user_prompt",
     "serialise_todo",
     "serialise_todo_list",
-    "summarise_with_groq",
-    "summarise_with_openrouter",
+    "summarize_with_groq",
+    "summarize_with_openrouter",
     "synthesise_speech",
     "write_run_markers",
 ]
