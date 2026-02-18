@@ -12,6 +12,7 @@ from ..logging_utils import configure_logging
 from ..llm import DEFAULT_MODELS, generate_random_podcast_script
 from ..media import synthesise_speech
 from ..notifications import post_summary_to_telegram, post_text_to_telegram
+from .common import resolve_telegram_chat_ids
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +68,6 @@ def save_topic_history(path: Path, topics: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(topics) + "\n", encoding="utf-8")
 
-
-def resolve_telegram_chat_ids(raw_values: list[str] | None) -> list[str]:
-    """Return cleaned Telegram chat IDs parsed from CLI flags or env vars."""
-
-    if not raw_values:
-        return []
-
-    chat_ids: list[str] = []
-    for raw_value in raw_values:
-        for value in raw_value.split(","):
-            chat_id = value.strip()
-            if chat_id:
-                chat_ids.append(chat_id)
-    return chat_ids
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
