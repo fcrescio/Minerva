@@ -280,6 +280,90 @@ append_action_args() {
   append_args_from_env _target "$_env_name"
 }
 
+append_sources_from_spec() {
+  local -n _target=$1
+  local _spec="$2"
+  local _source
+
+  if [[ -z "$_spec" ]]; then
+    return
+  fi
+
+  for _source in $_spec; do
+    if [[ "$_source" == ACTION:* ]]; then
+      append_action_args _target "${_source#ACTION:}"
+    else
+      append_args_from_env _target "$_source"
+    fi
+  done
+}
+
+build_action_args() {
+  local _action="$1"
+  local -n _target=$2
+  local _base_ref="${ACTION_BASE_REFS[$_action]}"
+  local _mode_ref="${ACTION_MODE_REFS[$_action]}"
+  local -n _base="$_base_ref"
+  local -n _mode="$_mode_ref"
+
+  _target=("${_base[@]}")
+  _target+=("${_mode[@]}")
+  append_sources_from_spec _target "${ACTION_GLOBAL_ENV_SOURCES[$_action]}"
+  append_sources_from_spec _target "${ACTION_OVERRIDE_ENV_SOURCES[$_action]}"
+}
+
+normalize_action_name() {
+  local _action="$1"
+  if [[ "$_action" == "summarise" ]]; then
+    printf 'summarize'
+  else
+    printf '%s' "$_action"
+  fi
+}
+
+check_action_inputs() {
+  local _action="$1"
+  local _missing=false
+  local _input
+
+  for _input in ${ACTION_REQUIRED_INPUTS[$_action]}; do
+    if [[ ! -f "$_input" ]]; then
+      log "Skipping $_action: missing required input at $_input"
+      _missing=true
+      break
+    fi
+  done
+
+  if [[ "$_missing" == "true" ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+remove_action_outputs() {
+  local _action="$1"
+  local _output
+
+  for _output in ${ACTION_CLEAN_OUTPUTS[$_action]}; do
+    rm -f "$_output"
+  done
+}
+
+check_action_outputs() {
+  local _action="$1"
+  local _output
+
+  for _output in ${ACTION_REQUIRED_OUTPUTS[$_action]}; do
+    if [[ ! -f "$_output" ]]; then
+      log "$_action output not created at $_output; skipping downstream actions"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 if [[ "$MODE" == "hourly" ]]; then
   PROMPT_FILE="$PROMPTS_DIR/hourly.txt"
   if [[ ! -f "$PROMPT_FILE" ]]; then
@@ -317,23 +401,55 @@ if [[ -n "$CONFIG_PATH" ]]; then
   FETCH_ARGS=("--config" "$CONFIG_PATH" "${FETCH_ARGS[@]}")
 fi
 
-FETCH_ARGS+=("${FETCH_MODE_ARGS[@]}")
-SUMMARY_ARGS+=("${SUMMARY_MODE_ARGS[@]}")
-PUBLISH_ARGS+=("${PUBLISH_MODE_ARGS[@]}")
+declare -A ACTION_COMMANDS=()
+declare -A ACTION_BASE_REFS=()
+declare -A ACTION_MODE_REFS=()
+declare -A ACTION_REQUIRED_INPUTS=()
+declare -A ACTION_CLEAN_OUTPUTS=()
+declare -A ACTION_REQUIRED_OUTPUTS=()
+declare -A ACTION_GLOBAL_ENV_SOURCES=()
+declare -A ACTION_OVERRIDE_ENV_SOURCES=()
+declare -A ACTION_LOG_MESSAGES=()
 
-append_args_from_env FETCH_ARGS MINERVA_FETCH_ARGS
-append_action_args FETCH_ARGS fetch
-append_args_from_env SUMMARY_ARGS MINERVA_SUMMARY_ARGS
-append_action_args SUMMARY_ARGS summarize
-append_action_args SUMMARY_ARGS summarise
-append_args_from_env SUMMARY_ARGS MINERVA_SHARED_ARGS
-append_args_from_env PUBLISH_ARGS MINERVA_PUBLISH_ARGS
-append_action_args PUBLISH_ARGS publish
-append_args_from_env PODCAST_ARGS MINERVA_PODCAST_ARGS
-append_action_args PODCAST_ARGS podcast
-append_args_from_env PODCAST_ARGS MINERVA_PODCAST_TELEGRAM_ARGS
+ACTION_COMMANDS[fetch]="fetch-todos"
+ACTION_BASE_REFS[fetch]="FETCH_ARGS"
+ACTION_MODE_REFS[fetch]="FETCH_MODE_ARGS"
+ACTION_REQUIRED_INPUTS[fetch]=""
+ACTION_CLEAN_OUTPUTS[fetch]="$TODO_DUMP_FILE"
+ACTION_REQUIRED_OUTPUTS[fetch]="$TODO_DUMP_FILE"
+ACTION_GLOBAL_ENV_SOURCES[fetch]="MINERVA_FETCH_ARGS"
+ACTION_OVERRIDE_ENV_SOURCES[fetch]="ACTION:fetch"
+ACTION_LOG_MESSAGES[fetch]="Fetching todos"
 
-PODCAST_ARGS+=("${PODCAST_MODE_ARGS[@]}")
+ACTION_COMMANDS[summarize]="summarize-todos"
+ACTION_BASE_REFS[summarize]="SUMMARY_ARGS"
+ACTION_MODE_REFS[summarize]="SUMMARY_MODE_ARGS"
+ACTION_REQUIRED_INPUTS[summarize]="$TODO_DUMP_FILE"
+ACTION_CLEAN_OUTPUTS[summarize]="$SUMMARY_FILE"
+ACTION_REQUIRED_OUTPUTS[summarize]="$SUMMARY_FILE"
+ACTION_GLOBAL_ENV_SOURCES[summarize]="MINERVA_SUMMARY_ARGS MINERVA_SHARED_ARGS"
+ACTION_OVERRIDE_ENV_SOURCES[summarize]="ACTION:summarize ACTION:summarise"
+ACTION_LOG_MESSAGES[summarize]="Generating summary"
+
+ACTION_COMMANDS[publish]="publish-summary"
+ACTION_BASE_REFS[publish]="PUBLISH_ARGS"
+ACTION_MODE_REFS[publish]="PUBLISH_MODE_ARGS"
+ACTION_REQUIRED_INPUTS[publish]="$SUMMARY_FILE"
+ACTION_CLEAN_OUTPUTS[publish]=""
+ACTION_REQUIRED_OUTPUTS[publish]=""
+ACTION_GLOBAL_ENV_SOURCES[publish]="MINERVA_PUBLISH_ARGS"
+ACTION_OVERRIDE_ENV_SOURCES[publish]="ACTION:publish"
+ACTION_LOG_MESSAGES[publish]="Publishing summary"
+
+ACTION_COMMANDS[podcast]="generate-podcast"
+ACTION_BASE_REFS[podcast]="PODCAST_ARGS"
+ACTION_MODE_REFS[podcast]="PODCAST_MODE_ARGS"
+ACTION_REQUIRED_INPUTS[podcast]=""
+ACTION_CLEAN_OUTPUTS[podcast]=""
+ACTION_REQUIRED_OUTPUTS[podcast]=""
+ACTION_GLOBAL_ENV_SOURCES[podcast]="MINERVA_PODCAST_ARGS MINERVA_PODCAST_TELEGRAM_ARGS"
+ACTION_OVERRIDE_ENV_SOURCES[podcast]="ACTION:podcast"
+ACTION_LOG_MESSAGES[podcast]="Generating random podcast"
 
 if [[ -n "${MINERVA_PODCAST_LANGUAGE:-}" ]]; then
   PODCAST_ARGS+=("--language" "$MINERVA_PODCAST_LANGUAGE")
@@ -359,46 +475,27 @@ fi
 log "Starting unit run with mode=$MODE actions=${ACTIONS[*]}"
 
 for action in "${ACTIONS[@]}"; do
-  case "$action" in
-    fetch)
-      log "Fetching todos"
-      rm -f "$TODO_DUMP_FILE"
-      fetch-todos "${FETCH_ARGS[@]}"
-      if [[ ! -f "$TODO_DUMP_FILE" ]]; then
-        log "Todo dump not created; skipping downstream actions"
-        break
-      fi
-      ;;
-    summarize|summarise)
-      if [[ ! -f "$TODO_DUMP_FILE" ]]; then
-        log "Skipping summarize: missing todo dump at $TODO_DUMP_FILE"
-        break
-      fi
-      log "Generating summary"
-      rm -f "$SUMMARY_FILE"
-      summarize-todos "${SUMMARY_ARGS[@]}"
-      if [[ ! -f "$SUMMARY_FILE" ]]; then
-        log "Summary file not created; skipping downstream actions"
-        break
-      fi
-      ;;
-    publish)
-      if [[ ! -f "$SUMMARY_FILE" ]]; then
-        log "Skipping publish: missing summary at $SUMMARY_FILE"
-        break
-      fi
-      log "Publishing summary"
-      publish-summary "${PUBLISH_ARGS[@]}"
-      ;;
-    podcast)
-      log "Generating random podcast"
-      generate-podcast "${PODCAST_ARGS[@]}"
-      ;;
-    *)
-      log "Unknown action '$action' for unit '${MINERVA_SELECTED_UNIT:-$UNIT_NAME}'"
-      exit 2
-      ;;
-  esac
+  canonical_action="$(normalize_action_name "$action")"
+  if [[ -z "${ACTION_COMMANDS[$canonical_action]+x}" ]]; then
+    log "Unknown action '$action' for unit '${MINERVA_SELECTED_UNIT:-$UNIT_NAME}'"
+    exit 2
+  fi
+
+  if ! check_action_inputs "$canonical_action"; then
+    break
+  fi
+
+  log "${ACTION_LOG_MESSAGES[$canonical_action]}"
+  remove_action_outputs "$canonical_action"
+
+  action_command="${ACTION_COMMANDS[$canonical_action]}"
+  action_args=()
+  build_action_args "$canonical_action" action_args
+  "$action_command" "${action_args[@]}"
+
+  if ! check_action_outputs "$canonical_action"; then
+    break
+  fi
 done
 
 log "Completed unit run"
