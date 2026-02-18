@@ -18,6 +18,14 @@ import tomllib
 from typing import Any, Mapping
 
 _CRON_FIELD = re.compile(r"^(\*|\d+|\d+-\d+|\*/\d+|\d+(,\d+)+)$")
+_ACTION_ALIASES = {"summarise": "summarize"}
+
+
+def normalize_action_token(action: object) -> str:
+    """Normalize action names to internal canonical tokens."""
+
+    token = str(action).strip().lower()
+    return _ACTION_ALIASES.get(token, token)
 
 
 @dataclass(frozen=True)
@@ -241,7 +249,7 @@ def _build_global_config(raw: Mapping[str, Any]) -> GlobalConfig:
     return GlobalConfig(
         mode=_as_optional_str(raw.get("mode")),
         args=_as_string_list(raw.get("args")),
-        actions=_as_string_list(raw.get("actions")),
+        actions=_as_action_list(raw.get("actions")),
         tokens=_as_string_map(raw.get("tokens")),
         secrets=_as_string_map(raw.get("secrets")),
         action_args=_as_action_args_map(raw.get("action")),
@@ -255,7 +263,7 @@ def _build_unit_config(raw: Mapping[str, Any]) -> UnitConfig:
         mode=_as_optional_str(raw.get("mode")),
         enabled=bool(raw.get("enabled", True)),
         args=_as_string_list(raw.get("args")),
-        actions=_as_string_list(raw.get("actions")),
+        actions=_as_action_list(raw.get("actions")),
         tokens=_as_string_map(raw.get("tokens")),
         secrets=_as_string_map(raw.get("secrets")),
         action_args=_as_action_args_map(raw.get("action")),
@@ -268,7 +276,7 @@ def _as_action_args_map(value: Any) -> dict[str, list[str]]:
 
     result: dict[str, list[str]] = {}
     for key, item in value.items():
-        normalized_key = str(key).strip()
+        normalized_key = normalize_action_token(key)
         if not normalized_key:
             continue
         if isinstance(item, Mapping):
@@ -293,6 +301,10 @@ def _as_optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _as_action_list(value: Any) -> list[str]:
+    return [normalize_action_token(item) for item in _as_string_list(value)]
 
 
 def _as_string_list(value: Any) -> list[str]:

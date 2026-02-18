@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..logging_utils import configure_logging
-from ..llm import DEFAULT_MODELS, summarise_with_groq, summarise_with_openrouter
+from ..llm import DEFAULT_MODELS, summarize_with_groq, summarize_with_openrouter
 from ..persistence import deserialise_todo_list, read_run_markers, write_run_markers
 from ..prompts import load_system_prompt
 from ..todos import TodoList
@@ -43,12 +43,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--provider",
         choices=sorted(DEFAULT_MODELS),
         default="openrouter",
-        help="LLM provider to use for summarisation.",
+        help="LLM provider to use for summarization.",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Model identifier to use for summarisation. Defaults depend on the provider.",
+        help="Model identifier to use for summarization. Defaults depend on the provider.",
     )
     parser.add_argument(
         "--temperature",
@@ -115,8 +115,8 @@ def main(argv: list[str] | None = None) -> None:
     dump_path = Path(args.todos)
     dump = _load_dump(dump_path)
     if not dump.todo_lists:
-        logger.info("Todo dump %s does not contain any lists to summarise", dump_path)
-        print("Todo dump does not contain any lists to summarise.")
+        logger.info("Todo dump %s does not contain any lists to summarize", dump_path)
+        print("Todo dump does not contain any lists to summarize.")
         return
 
     model = args.model or DEFAULT_MODELS[args.provider]
@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.provider == "groq":
-        summary = summarise_with_groq(
+        summary = summarize_with_groq(
             dump.todo_lists,
             model=model,
             temperature=args.temperature,
@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
             system_prompt=system_prompt,
         )
     else:
-        summary = summarise_with_openrouter(
+        summary = summarize_with_openrouter(
             dump.todo_lists,
             model=model,
             temperature=args.temperature,

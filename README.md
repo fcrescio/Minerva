@@ -49,9 +49,9 @@ Todo items are displayed in chronological order, with the closest `dueDate` firs
 and undated entries listed last. Each todo retains its associated metadata for
 easy inspection.
 
-## Summarise and publish todos with atomic commands
+## Summarize and publish todos with atomic commands
 
-The summarisation workflow is split across three standalone commands so that
+The summarization workflow is split across three standalone commands so that
 each step can be automated independently or combined in custom pipelines. The
 output of one command acts as the input for the next:
 
@@ -172,7 +172,8 @@ actions = ["publish"]                # appended to global actions
 ```
 
 Actions execute in order. Built-in actions are `fetch`, `summarize`, `publish`, and
-`podcast`. If a required artifact is missing (for example, summary without todo dump),
+`podcast`. For backward compatibility, run plans also accept the alias
+`summarise`, which is normalized to `summarize`. If a required artifact is missing (for example, summary without todo dump),
 Minerva skips that action and downstream actions for that unit run.
 
 ### Global defaults vs unit overrides

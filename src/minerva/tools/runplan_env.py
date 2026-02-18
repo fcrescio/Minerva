@@ -8,7 +8,13 @@ import tomllib
 from pathlib import Path
 from typing import Any, Mapping
 
-from minerva.runplan import RunPlanValidationError, default_plan, load_run_plan, render_cron
+from minerva.runplan import (
+    RunPlanValidationError,
+    default_plan,
+    load_run_plan,
+    normalize_action_token,
+    render_cron,
+)
 
 
 _PATHS_MAP = {
@@ -89,9 +95,9 @@ def _selected_raw_unit(raw_plan: Mapping[str, object], unit_name: str) -> dict[s
 
 
 def _merge_action_tables(a: Mapping[str, object], b: Mapping[str, object]) -> dict[str, object]:
-    merged_table = dict(a)
+    merged_table = {normalize_action_token(key): value for key, value in a.items() if normalize_action_token(key)}
     for key, value in b.items():
-        key_text = str(key).strip()
+        key_text = normalize_action_token(key)
         if not key_text:
             continue
         global_entry = merged_table.get(key_text, {})
@@ -136,6 +142,8 @@ def derive_unit_exports(plan_file: str | Path, unit_name: str) -> list[str]:
     actions = merged.actions
     if not actions:
         actions = ["fetch", "summarize", "publish", "podcast"] if str(mode) == "daily" else ["fetch", "summarize", "publish"]
+
+    actions = [normalize_action_token(item) for item in actions]
 
     lines: list[str] = []
     for key, value in merged_env.items():

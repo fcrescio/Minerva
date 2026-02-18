@@ -101,6 +101,29 @@ actions = ["fetch"]
         self.assertEqual(merged.action_args["fetch"], ["--global", "--unit"])
         self.assertEqual(merged.action_args["summarize"], ["--provider", "openrouter"])
 
+
+    def test_actions_and_action_args_accept_summarise_alias(self) -> None:
+        plan = RunPlan.from_mapping(
+            {
+                "global": {
+                    "actions": ["summarise"],
+                    "action": {"summarise": {"args": ["--global"]}},
+                },
+                "unit": [
+                    {
+                        "name": "u3",
+                        "schedule": "0 * * * *",
+                        "actions": ["summarize"],
+                        "action": {"summarise": {"args": ["--unit"]}},
+                    }
+                ],
+            }
+        )
+
+        merged = plan.merged_unit(plan.units[0])
+        self.assertEqual(merged.actions, ["summarize", "summarize"])
+        self.assertEqual(merged.action_args["summarize"], ["--global", "--unit"])
+
     def test_duplicate_unit_name_validation(self) -> None:
         with self.assertRaises(RunPlanValidationError) as ctx:
             RunPlan.from_mapping(

@@ -256,7 +256,8 @@ PUBLISH_MODE_ARGS=()
 PODCAST_MODE_ARGS=()
 
 append_args_from_env() {
-  local -n _target=$1
+  local _target_name=$1
+  local -n _target="$_target_name"
   local _env_name=$2
   local _env_value="${!_env_name:-}"
   if [[ -n "$_env_value" ]]; then
@@ -274,14 +275,18 @@ sanitize_key() {
 }
 
 append_action_args() {
-  local -n _target=$1
+  local _target_name=$1
+  local -n _target="$_target_name"
   local _action_name="$2"
-  local _env_name="MINERVA_ACTION_$(sanitize_key "$_action_name")_ARGS"
-  append_args_from_env _target "$_env_name"
+  local _canonical_action
+  _canonical_action="$(normalize_action_token "$_action_name")"
+  local _env_name="MINERVA_ACTION_$(sanitize_key "$_canonical_action")_ARGS"
+  append_args_from_env "$_target_name" "$_env_name"
 }
 
 append_sources_from_spec() {
-  local -n _target=$1
+  local _target_name=$1
+  local -n _target="$_target_name"
   local _spec="$2"
   local _source
 
@@ -291,9 +296,9 @@ append_sources_from_spec() {
 
   for _source in $_spec; do
     if [[ "$_source" == ACTION:* ]]; then
-      append_action_args _target "${_source#ACTION:}"
+      append_action_args "$_target_name" "${_source#ACTION:}"
     else
-      append_args_from_env _target "$_source"
+      append_args_from_env "$_target_name" "$_source"
     fi
   done
 }
@@ -312,7 +317,7 @@ build_action_args() {
   append_sources_from_spec _target "${ACTION_OVERRIDE_ENV_SOURCES[$_action]}"
 }
 
-normalize_action_name() {
+normalize_action_token() {
   local _action="$1"
   if [[ "$_action" == "summarise" ]]; then
     printf 'summarize'
@@ -428,7 +433,7 @@ ACTION_REQUIRED_INPUTS[summarize]="$TODO_DUMP_FILE"
 ACTION_CLEAN_OUTPUTS[summarize]="$SUMMARY_FILE"
 ACTION_REQUIRED_OUTPUTS[summarize]="$SUMMARY_FILE"
 ACTION_GLOBAL_ENV_SOURCES[summarize]="MINERVA_SUMMARY_ARGS MINERVA_SHARED_ARGS"
-ACTION_OVERRIDE_ENV_SOURCES[summarize]="ACTION:summarize ACTION:summarise"
+ACTION_OVERRIDE_ENV_SOURCES[summarize]="ACTION:summarize"
 ACTION_LOG_MESSAGES[summarize]="Generating summary"
 
 ACTION_COMMANDS[publish]="publish-summary"
@@ -475,7 +480,7 @@ fi
 log "Starting unit run with mode=$MODE actions=${ACTIONS[*]}"
 
 for action in "${ACTIONS[@]}"; do
-  canonical_action="$(normalize_action_name "$action")"
+  canonical_action="$(normalize_action_token "$action")"
   if [[ -z "${ACTION_COMMANDS[$canonical_action]+x}" ]]; then
     log "Unknown action '$action' for unit '${MINERVA_SELECTED_UNIT:-$UNIT_NAME}'"
     exit 2
